@@ -7,6 +7,7 @@ import subprocess
 import sys
 from contextlib import closing
 
+import numpy as np
 import pandas as pd
 import pytest
 from typer.testing import CliRunner
@@ -205,3 +206,130 @@ def test_module_entry_point_matches_the_console_script():
     )
     assert result.returncode == 0
     assert result.stdout.strip() == f"biosigkit {__version__}"
+
+
+# ---------------------------------------------------------------- trial checks in `features`
+@pytest.fixture
+def late_events(tmp_path, recording):
+    """The recording's events plus one trial that starts after the recording ends."""
+    _, session = recording
+    events = session.events[["onset", "offset", "label"]].copy()
+    end = session.emg.duration
+    events.loc[len(events)] = [end + 1.0, end + 7.0, "late"]
+    path = tmp_path / "events_late.csv"
+    events.to_csv(path, index=False)
+    return path
+
+
+def trial_args(folder, events, out, *extra):
+    return [
+        "features", folder / "emg_plain.csv", "--fs", 1000, "--events", events, "--mode", "trial",
+        "--no-preprocess", "--output", out, *extra,
+    ]  # fmt: skip
+
+
+def test_trial_mode_names_the_bad_trial_and_can_skip_it(tmp_path, recording, late_events):
+    folder, session = recording
+    out = tmp_path / "t.csv"
+    failed = run(*trial_args(folder, late_events, out))
+    assert failed.exit_code == 1
+    assert "1 of 5 trial(s) rejected" in failed.output and "outside the recording" in failed.output
+    assert "--on-invalid skip" in failed.output
+    assert not out.exists()
+
+    rejected_csv = tmp_path / "rejected.csv"
+    ok = run(*trial_args(folder, late_events, out, "--on-invalid", "skip",
+                         "--rejected-out", rejected_csv))  # fmt: skip
+    assert ok.exit_code == 0, ok.output
+    assert "Skipped 1 trial(s): 1 outside_recording" in ok.output
+    rejected = pd.read_csv(rejected_csv)
+    assert rejected["label"].tolist() == ["late"]
+    assert rejected["reason"].tolist() == ["outside_recording"]
+    assert "valid" not in rejected.columns
+    assert len(pd.read_csv(out)) == len(session.events)
+
+
+def test_check_quality_rejects_trials_with_missing_samples(tmp_path, recording):
+    folder, session = recording
+    signal = pd.read_csv(folder / "emg_plain.csv")
+    first = session.events.iloc[0]
+    signal.loc[round((first.onset + 2.0) * 1000), "emg1"] = np.nan
+    holes = tmp_path / "holes.csv"
+    signal.to_csv(holes, index=False)
+    args = ["features", holes, "--fs", 1000, "--events", folder / "events.csv", "--mode", "trial",
+            "--no-preprocess", "--output", tmp_path / "t.csv"]  # fmt: skip
+
+    failed = run(*args, "--check-quality")
+    assert failed.exit_code == 1
+    assert "emg1" in failed.output and "NaN or infinite" in failed.output
+
+    skipped = run(*args, "--check-quality", "--on-invalid", "skip")
+    assert skipped.exit_code == 0 and "Skipped 1 trial(s): 1 nonfinite" in skipped.output
+    assert len(pd.read_csv(tmp_path / "t.csv")) == len(session.events) - 1
+
+
+def test_trial_options_are_refused_in_window_mode(recording, tmp_path):
+    folder, _ = recording
+    result = run("features", folder / "emg_time.csv", "--time-col", "time", "--check-quality",
+                 "-o", tmp_path / "x.csv")  # fmt: skip
+    assert result.exit_code == 1 and "only apply to --mode trial" in result.output
+    result = run("features", folder / "emg_time.csv", "--time-col", "time", "--on-invalid", "maybe",
+                 "-o", tmp_path / "x.csv")  # fmt: skip
+    assert result.exit_code == 1 and "--on-invalid must be" in result.output
+
+
+# --------------------------------------------------------------------------- qc, duplicates
+@pytest.fixture(scope="module")
+def csv_files(tmp_path_factory):
+    folder = tmp_path_factory.mktemp("qc")
+    rng = np.random.default_rng(21)
+    clean = pd.DataFrame(rng.standard_normal((10000, 2)), columns=["emg1", "emg2"])
+    clipped = clean.copy()
+    clipped["emg2"] = np.clip(3.0 * clipped["emg2"], -2.0, 2.0)
+    clean.to_csv(folder / "clean.csv", index=False)
+    clean.to_csv(folder / "copy_of_clean.csv", index=False)
+    clipped.to_csv(folder / "clipped.csv", index=False)
+    other = pd.DataFrame(rng.standard_normal((10000, 2)), columns=["emg1", "emg2"])
+    other.to_csv(folder / "other.csv", index=False)
+    return folder
+
+
+def test_qc_reports_each_channel_and_strict_sets_the_exit_status(csv_files, tmp_path):
+    clean = run("qc", csv_files / "clean.csv", "--fs", 1000, "--strict")
+    assert clean.exit_code == 0 and "2 of 2 channel(s) ok." in clean.output
+
+    out = tmp_path / "qc.csv"
+    clipped = run("qc", csv_files / "clipped.csv", "--fs", 1000, "-o", out)
+    assert clipped.exit_code == 0  # a report, not a gate, unless --strict
+    assert "emg2: " in clipped.output and "clipped" in clipped.output
+    assert "1 of 2 channel(s) ok." in clipped.output
+    assert pd.read_csv(out).set_index("channel")["ok"].to_dict() == {"emg1": True, "emg2": False}
+
+    strict = run("qc", csv_files / "clipped.csv", "--fs", 1000, "--strict")
+    assert strict.exit_code == 1
+
+
+def test_qc_needs_a_sampling_rate(csv_files):
+    result = run("qc", csv_files / "clean.csv")
+    assert result.exit_code == 1 and "provide fs or time_col" in result.output
+
+
+def test_duplicates_finds_identical_recordings(csv_files):
+    files = [csv_files / n for n in ("clean.csv", "clipped.csv", "copy_of_clean.csv")]
+    result = run("duplicates", *files, "--fs", 1000)
+    assert result.exit_code == 0, result.output
+    assert "recording" in result.output
+    assert "clean.csv" in result.output and "copy_of_clean.csv" in result.output
+    assert run("duplicates", *files, "--fs", 1000, "--strict").exit_code == 1
+
+
+def test_duplicates_also_reports_a_channel_shared_by_two_files(csv_files):
+    files = [csv_files / "clean.csv", csv_files / "clipped.csv"]  # same emg1, different emg2
+    result = run("duplicates", *files, "--fs", 1000)
+    assert result.exit_code == 0 and "channel" in result.output and "/emg1" in result.output
+
+
+def test_duplicates_says_so_when_there_are_none(csv_files):
+    files = [csv_files / "clean.csv", csv_files / "other.csv"]
+    result = run("duplicates", *files, "--fs", 1000, "--strict")
+    assert result.exit_code == 0 and "No duplicates among 2 recording(s)." in result.output

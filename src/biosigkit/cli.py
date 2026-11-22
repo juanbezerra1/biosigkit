@@ -1,4 +1,4 @@
-"""Command-line interface: ``biosigkit demo | features | evaluate | sql``."""
+"""Command-line interface: ``biosigkit demo | features | qc | duplicates | evaluate | sql``."""
 
 from __future__ import annotations
 
@@ -12,11 +12,13 @@ import typer
 
 from . import __version__
 from .demo import run_demo
+from .duplicates import find_duplicates
 from .eeg import eeg_features
 from .emg import emg_features
 from .io import read_csv, read_events
 from .ml import MODEL_NAMES, cross_validate, within_group_zscore
 from .preprocess import EEG_PRESET, EMG_PRESET, preprocess
+from .quality import signal_quality
 from .storage import list_examples, query, read_example
 from .tables import (
     RESERVED_COLUMNS,
@@ -24,6 +26,7 @@ from .tables import (
     trial_feature_table,
     window_feature_table,
 )
+from .trials import check_trials, drop_invalid
 
 app = typer.Typer(
     help="EMG / EEG / force biosignal toolkit: features, leakage-safe evaluation, SQL.",
@@ -98,18 +101,35 @@ def features(
     trim: Annotated[float, typer.Option(help="Seconds trimmed at both ends in mode=trial.")] = 0.0,
     subject: Annotated[str, typer.Option(help="Subject id written to the table.")] = "S01",
     session: Annotated[str, typer.Option(help="Session id written to the table.")] = "S1",
+    on_invalid: Annotated[
+        str, typer.Option(help="mode=trial: 'raise' (stop at a bad trial) or 'skip' it.")
+    ] = "raise",
+    check_quality: Annotated[
+        bool,
+        typer.Option(
+            "--check-quality/--no-check-quality",
+            help="mode=trial: also reject trials with NaN, flat or clipped samples (raw data).",
+        ),
+    ] = False,
+    rejected_out: Annotated[
+        Path | None, typer.Option(help="mode=trial: write the rejected trials and why to this CSV.")
+    ] = None,
 ) -> None:
     """Preprocess a signal CSV and write a window- or trial-level feature table."""
     if mode not in {"window", "trial"}:
         _fail("--mode must be 'window' or 'trial'")
     if kind not in {"emg", "eeg"}:
         _fail("--kind must be 'emg' or 'eeg'")
+    if on_invalid not in {"raise", "skip"}:
+        _fail("--on-invalid must be 'raise' or 'skip'")
     if mode == "trial" and events is None:
         _fail("--mode trial needs --events")
+    if mode == "window" and (check_quality or rejected_out is not None):
+        _fail("--check-quality and --rejected-out only apply to --mode trial")
+    rejected = None
     try:
-        sig = read_csv(signal_csv, fs=fs, time_col=time_col)
-        if preprocessing:
-            sig = preprocess(sig, EMG_PRESET if kind == "emg" else EEG_PRESET)
+        raw = read_csv(signal_csv, fs=fs, time_col=time_col)
+        sig = preprocess(raw, EMG_PRESET if kind == "emg" else EEG_PRESET) if preprocessing else raw
         feature_fn = emg_features if kind == "emg" else partial(eeg_features, nperseg_s=1.0)
         ev = read_events(events) if events is not None else None
         meta = {"subject": subject, "session": session}
@@ -119,11 +139,85 @@ def features(
             )
         else:
             assert ev is not None
-            table = trial_feature_table(sig, ev, feature_fn=feature_fn, trim_s=trim, meta=meta)
+            # the quality checks need the raw samples: filtering smooths clipping away
+            report = check_trials(raw, ev, trim_s=trim, quality=check_quality)
+            rejected = report.loc[~report["valid"]].drop(columns="valid")
+            if len(rejected) and on_invalid == "raise":
+                first = rejected.iloc[0]
+                _fail(
+                    f"{len(rejected)} of {len(report)} trial(s) rejected; the first, trial "
+                    f"{first['trial']} ({first['onset']}-{first['offset']} s), "
+                    f"{first['detail']}. Use --on-invalid skip to leave them out."
+                )
+            table = trial_feature_table(
+                sig, drop_invalid(ev, report), feature_fn=feature_fn, trim_s=trim, meta=meta
+            )
     except (ValueError, KeyError, OSError) as exc:
         _fail(str(exc))
     table.to_csv(output, index=False)
     typer.echo(f"Wrote {len(table)} rows x {table.shape[1]} columns to {output}")
+    if rejected is not None:
+        if rejected_out is not None:
+            rejected.to_csv(rejected_out, index=False)
+        if len(rejected):
+            reasons = rejected["reason"].str.split(";").explode().value_counts()
+            summary = ", ".join(f"{n} {reason}" for reason, n in reasons.items())
+            where = f"; see {rejected_out}" if rejected_out is not None else ""
+            typer.echo(f"Skipped {len(rejected)} trial(s): {summary}{where}")
+
+
+@app.command()
+def qc(
+    signal_csv: Annotated[
+        Path, typer.Argument(exists=True, dir_okay=False, help="CSV, one column per channel.")
+    ],
+    fs: Annotated[float | None, typer.Option(help="Sampling rate (Hz); or use --time-col.")] = None,
+    time_col: Annotated[str | None, typer.Option(help="Time column (seconds) to infer fs.")] = None,
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="Also write a CSV.")] = None,
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Exit with status 1 if any channel has an issue.")
+    ] = False,
+) -> None:
+    """Signal-quality report per channel: clipping, flat lines, NaN and mains interference."""
+    try:
+        sig = read_csv(signal_csv, fs=fs, time_col=time_col)
+        report = signal_quality(sig)
+    except (ValueError, KeyError, OSError) as exc:
+        _fail(str(exc))
+    _show(report.drop(columns=["n_samples", "issues"]))
+    for row in report.loc[~report["ok"]].itertuples():
+        typer.echo(f"  {row.channel}: {row.issues}")
+    if output is not None:
+        report.to_csv(output, index=False)
+    bad = int((~report["ok"]).sum())
+    typer.echo(f"{len(report) - bad} of {len(report)} channel(s) ok.")
+    if strict and bad:
+        raise typer.Exit(1)
+
+
+@app.command()
+def duplicates(
+    files: Annotated[
+        list[Path], typer.Argument(exists=True, dir_okay=False, help="Signal CSVs to compare.")
+    ],
+    fs: Annotated[float | None, typer.Option(help="Sampling rate (Hz); or use --time-col.")] = None,
+    time_col: Annotated[str | None, typer.Option(help="Time column (seconds) to infer fs.")] = None,
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Exit with status 1 if a duplicate is found.")
+    ] = False,
+) -> None:
+    """Find recordings (or channels) that hold exactly the same samples under different names."""
+    try:
+        recordings = {str(f): read_csv(f, fs=fs, time_col=time_col) for f in files}
+        report = find_duplicates(recordings)
+    except (ValueError, KeyError, OSError) as exc:
+        _fail(str(exc))
+    if report.empty:
+        typer.echo(f"No duplicates among {len(recordings)} recording(s).")
+        return
+    _show(report)
+    if strict:
+        raise typer.Exit(1)
 
 
 @app.command()
