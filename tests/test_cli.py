@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -189,6 +191,164 @@ def test_sql_run_is_read_only(database):
     assert result.exit_code == 1
     with closing(sqlite3.connect(database)) as conn:  # the table is still there
         assert conn.execute("SELECT COUNT(*) FROM subjects").fetchone()[0] == 4
+
+
+# ------------------------------------------------------------------------ export, dashboard
+def embedded_data(path):
+    """The JSON a dashboard page carries."""
+    page = path.read_text(encoding="utf-8")
+    match = re.search(r'<script type="application/json" id="data">(.*?)</script>', page, re.S)
+    assert match, "the page has no data element"
+    return json.loads(match.group(1))
+
+
+def test_export_writes_the_feature_table_back_to_a_csv(database, cohort_csv, tmp_path):
+    out = tmp_path / "features.csv"
+    result = run("export", database, "-o", out)
+    assert result.exit_code == 0, result.output
+    assert "Wrote 48 rows x 16 columns" in result.output
+    exported = pd.read_csv(out)
+    original = pd.read_csv(cohort_csv)
+    assert {"segment_id", "subject", "label", "emg1_mav", "emg2_ssc"} <= set(exported.columns)
+    assert len(exported) == len(original)
+    # the numbers survive the round trip through SQL
+    merged = exported.sort_values(["subject", "t_start"]).reset_index(drop=True)
+    ref = original.sort_values(["subject", "t_start"]).reset_index(drop=True)
+    np.testing.assert_allclose(merged["emg1_rms"], ref["emg1_rms"])
+    assert merged["label"].tolist() == ref["label"].tolist()
+    # and the file is ready for the other commands
+    assert run("evaluate", out, "--model", "lda", "--normalize").exit_code == 0
+
+
+def test_export_does_not_change_the_database(database, tmp_path):
+    before = database.read_bytes()
+    run("export", database, "-o", tmp_path / "features.csv")
+    assert database.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--kind", "window"], "holds no window segments (try --kind trial)"),
+        (["--kind", "epoch"], "--kind must be"),
+    ],
+)
+def test_export_fails_cleanly(database, tmp_path, args, message):
+    result = run("export", database, "-o", tmp_path / "x.csv", *args)
+    assert result.exit_code == 1 and message in result.output
+    assert not (tmp_path / "x.csv").exists()
+
+
+def test_export_refuses_a_file_that_is_not_a_biosigkit_database(tmp_path, cohort_csv):
+    (tmp_path / "text.db").write_text("not a database", encoding="utf-8")
+    result = run("export", tmp_path / "text.db", "-o", tmp_path / "x.csv")
+    assert result.exit_code == 1 and "not a biosigkit database" in result.output
+    other = tmp_path / "other.sqlite"  # a real SQLite file, but not ours
+    with closing(sqlite3.connect(other)) as conn:
+        conn.execute("CREATE TABLE notes (id INTEGER)")
+    result = run("export", other, "-o", tmp_path / "x.csv")
+    assert result.exit_code == 1 and "not a biosigkit database" in result.output
+    assert "notes" in result.output
+
+
+def test_dashboard_from_a_csv(cohort_csv, tmp_path):
+    out = tmp_path / "page.html"
+    result = run("dashboard", cohort_csv, "-o", out, "--title", "Four subjects")
+    assert result.exit_code == 0, result.output
+    assert "48 rows, 4 subjects, 4 labels, 10 features" in result.output
+    page = out.read_text(encoding="utf-8")
+    assert "<title>Four subjects</title>" in page
+    data = embedded_data(out)
+    assert data["source"] == "trials.csv" and data["id_name"] == "trial"
+    assert len(data["validation"]["results"]) == 12  # 4 models x 3 validation schemes
+    assert b"\r" not in out.read_bytes()
+
+
+def test_the_output_option_is_spelled_both_ways(cohort_csv, database, tmp_path):
+    # `demo` says --out, `features` says --output; the new commands accept both
+    for name in ("--out", "--output", "-o"):
+        page = tmp_path / f"page{name}.html"
+        assert run("dashboard", cohort_csv, name, page, "--no-validation").exit_code == 0
+        assert page.stat().st_size > 0
+        table = tmp_path / f"table{name}.csv"
+        assert run("export", database, name, table).exit_code == 0
+        assert table.stat().st_size > 0
+
+
+def test_dashboard_from_a_database_reads_the_stored_table(database, tmp_path):
+    out = tmp_path / "page.html"
+    result = run("dashboard", database, "-o", out, "--no-validation")
+    assert result.exit_code == 0, result.output
+    data = embedded_data(out)
+    assert data["n_rows"] == 48 and data["id_name"] == "segment"
+    assert data["validation"] is None
+    assert run("dashboard", database, "-o", out, "--kind", "window").exit_code == 1
+
+
+def test_dashboard_options_reach_the_page(cohort_csv, tmp_path):
+    out = tmp_path / "page.html"
+    result = run(
+        "dashboard", cohort_csv, "-o", out,
+        "--labels", "10%, 70%",
+        "--features", "emg1_mav,emg2_rms",
+        "--models", "lda,svm_linear",
+        "--label-scale", "nominal",
+        "--max-rows", 20,
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    assert "a random sample of 24 rows (--max-rows 20)" in result.output
+    data = embedded_data(out)
+    assert data["labels"] == ["10%", "70%"] and data["label_scale"] == "nominal"
+    assert sorted(data["values"]) == ["emg1_mav", "emg2_rms"] and data["n_rows"] == 20
+    assert [m["key"] for m in data["validation"]["models"]] == ["lda", "svm_linear"]
+
+
+def test_dashboard_says_why_it_left_the_validation_chart_out(cohort_csv, tmp_path):
+    two = tmp_path / "two.csv"
+    table = pd.read_csv(cohort_csv)
+    table[table["subject"].isin(["S01", "S02"])].to_csv(two, index=False)
+    result = run("dashboard", two, "-o", tmp_path / "page.html")
+    assert result.exit_code == 0, result.output
+    assert "no validation chart: validation needs at least 3 subjects" in result.output
+    assert embedded_data(tmp_path / "page.html")["validation"]["error"]
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--label-col", "nothing"], "column 'nothing' not found"),
+        (["--subject-col", "nobody"], "column 'nobody' not found"),
+        (["--features", "emg1_mav,nope"], "feature column(s) not found"),
+        (["--features", "session"], "not numeric"),
+        (["--models", "transformer"], "unknown model"),
+        (["--models", ""], "models is empty"),
+        (["--labels", "99%"], "none of the labels"),
+        (["--label-scale", "rainbow"], "--label-scale must be"),
+        (["--kind", "epoch"], "--kind must be"),
+        (["--max-rows", "0"], "--max-rows must be at least 1"),
+    ],
+)
+def test_dashboard_fails_cleanly(cohort_csv, tmp_path, args, message):
+    out = tmp_path / "page.html"
+    result = run("dashboard", cohort_csv, "-o", out, *args)
+    assert result.exit_code == 1 and message in result.output
+    assert not out.exists()
+
+
+def test_dashboard_refuses_more_labels_than_it_can_colour(tmp_path):
+    rows = [
+        {"subject": f"P{s}", "label": f"c{i}", "f1": float(i)} for s in range(3) for i in range(9)
+    ]
+    path = tmp_path / "many.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    result = run("dashboard", path, "-o", tmp_path / "page.html", "--no-validation")
+    assert result.exit_code == 1 and "9 labels" in result.output and "--labels" in result.output
+
+
+def test_dashboard_reports_an_unreadable_csv_without_a_traceback(tmp_path):
+    (tmp_path / "empty.csv").write_text("", encoding="utf-8")
+    result = run("dashboard", tmp_path / "empty.csv", "-o", tmp_path / "page.html")
+    assert result.exit_code == 1 and "Error:" in result.output
 
 
 # ------------------------------------------------------------------------------------ demo
