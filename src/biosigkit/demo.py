@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .dashboard import write_dashboard
 from .duplicates import find_duplicates, signal_hash
 from .eeg import BANDS, band_power, erd_percent, psd, reject_by_ptp
 from .emg import baseline_threshold, detect_activations, emg_features, linear_envelope
@@ -183,7 +184,8 @@ def _report(summary: dict[str, Any], results: pd.DataFrame, tracking: pd.DataFra
         _markdown_table(shown),
         "",
         "`kfold` ignores subjects (leaky); `loso` holds out one whole subject per fold; "
-        "`within_group` z-scores features inside each subject.",
+        "`within_group` z-scores features inside each subject. Look at the same features by "
+        "subject and by label in `dashboard.html` (open it in a browser).",
         "",
         "## Force tracking (hold phase)",
         "",
@@ -306,7 +308,7 @@ def run_demo(
         sql_rows[name] = len(df)
     conn.close()
 
-    say("[5/6] Drawing figures")
+    say("[5/6] Drawing figures and the interactive dashboard")
     emg, env, acts, events, thr = overview  # type: ignore[misc]
     save_figure(
         plot_emg_overview(emg, env, acts, events, channel="emg1", threshold=thr),
@@ -316,6 +318,14 @@ def run_demo(
     save_figure(
         plot_confusion(best.confusion(), title="LDA, LOSO + within-subject z-score"),
         out / "figures" / "confusion_matrix.png",
+    )
+    write_dashboard(
+        table,
+        out / "dashboard.html",
+        features=cols,
+        validation=results,  # the numbers of step 3, not a second run
+        title="biosigkit demo: synthetic cohort",
+        source="synthetic data from biosigkit demo",
     )
 
     say("[6/6] EEG: alpha desynchronisation on synthetic C3/Cz/C4")
@@ -357,5 +367,8 @@ def run_demo(
     )
     say("\nValidation scenarios (accuracy over all held-out predictions):")
     say(results.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
-    say(f"\nResults written to {out}/ (report.md, figures/, sql/, biosigkit_demo.sqlite)")
+    say(
+        f"\nResults written to {out}/ "
+        "(report.md, dashboard.html, figures/, sql/, biosigkit_demo.sqlite)"
+    )
     return summary
