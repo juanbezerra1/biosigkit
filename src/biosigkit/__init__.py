@@ -2,6 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+from .dashboard import dashboard_data, render_dashboard, write_dashboard
 from .duplicates import find_duplicates, signal_hash
 from .eeg import eeg_features
 from .emg import emg_features
@@ -30,6 +31,7 @@ __all__ = [
     "compare_scenarios",
     "connect",
     "cross_validate",
+    "dashboard_data",
     "drop_invalid",
     "eeg_features",
     "emg_features",
@@ -42,6 +44,7 @@ __all__ = [
     "preprocess",
     "read_csv",
     "read_events",
+    "render_dashboard",
     "signal_hash",
     "signal_quality",
     "sliding_windows",
@@ -49,4 +52,5 @@ __all__ = [
     "window_feature_table",
     "within_group_zscore",
     "write_csv",
+    "write_dashboard",
 ]

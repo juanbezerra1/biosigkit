@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --mutedtext: #6f6d68;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, 0.10); --wash: rgba(11, 11, 11, 0.04);
+  --focus: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --mutedtext: #a19f97;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.06);
+    --focus: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --mutedtext: #a19f97;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.06);
+  --focus: #3987e5;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { background: var(--page); }
+body {
+  margin: 0; color: var(--ink); background: var(--page);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.skip { position: absolute; left: -9999px; top: 8px; background: var(--surface); padding: 6px 10px; border-radius: 6px; z-index: 5; }
+.skip:focus { left: 12px; }
+main, header.top, footer { max-width: 1120px; margin: 0 auto; padding-left: 20px; padding-right: 20px; }
+header.top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding-top: 24px; padding-bottom: 12px; }
+h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.sub { margin: 2px 0 0; color: var(--ink2); font-size: 13px; }
+.btn {
+  font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 5px 11px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--wash); }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 8px 0 16px; padding: 0; list-style: none; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; }
+.tile .k { color: var(--ink2); font-size: 13px; }
+.tile .v { font-size: 28px; font-weight: 600; line-height: 1.2; }
+.tile .n { color: var(--ink2); font-size: 12px; min-height: 1.2em; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px 14px; margin: 0 0 16px; }
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 0 4px; padding: 0; list-style: none; color: var(--ink2); font-size: 13px; }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.legend svg { flex: none; }
+.note { color: var(--ink2); font-size: 13px; margin: 8px 0 0; }
+.fig { position: relative; overflow-x: auto; }
+.fig svg { display: block; }
+.empty { color: var(--ink2); padding: 28px 0; text-align: center; }
+.filters { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: flex-start; }
+.filters fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.filters legend, .filters label.k { display: block; padding: 0; color: var(--ink2); font-size: 12px; margin-bottom: 4px; }
+.filters select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; max-width: 260px; }
+.checks { display: flex; flex-wrap: wrap; gap: 2px 12px; max-width: 520px; max-height: 96px; overflow-y: auto; }
+.checks label, .radios label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+.radios { display: flex; gap: 12px; }
+.mini { font: inherit; font-size: 12px; color: var(--ink2); background: none; border: 0; padding: 0 4px; cursor: pointer; text-decoration: underline; }
+.status { flex-basis: 100%; margin: 0; color: var(--ink2); font-size: 13px; }
+.tablebox { max-height: 26rem; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+caption { text-align: left; padding: 8px 10px; color: var(--ink2); }
+th, td { padding: 5px 10px; border-top: 1px solid var(--grid); text-align: right; font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; }
+thead th { position: sticky; top: 0; background: var(--surface); color: var(--ink2); font-weight: 600; border-top: 0; border-bottom: 1px solid var(--axis); }
+.tip {
+  position: fixed; z-index: 10; pointer-events: none; max-width: 280px; padding: 8px 10px; border-radius: 8px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--axis); font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+.tip strong { display: block; font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+.tip span { display: block; color: var(--ink2); }
+.err { background: var(--surface); border: 1px solid var(--axis); border-radius: 12px; padding: 16px; margin: 16px 0; }
+footer { color: var(--ink2); font-size: 12px; padding-bottom: 32px; }
+svg text { font-family: inherit; }
+svg .t { fill: var(--ink2); font-size: 12px; }
+svg .t-ink { fill: var(--ink); font-size: 12px; }
+svg .grid { stroke: var(--grid); stroke-width: 1; }
+svg .axisline { stroke: var(--axis); stroke-width: 1; }
+svg .mark { stroke: var(--surface); stroke-width: 4; paint-order: stroke; stroke-linejoin: round; }
+svg .median { stroke: var(--ink); stroke-width: 2; stroke-linecap: round; }
+svg .link { stroke: var(--axis); stroke-width: 2; stroke-linecap: round; }
+svg .base { stroke: var(--ink2); stroke-width: 1; }
+svg .hover { fill: none; stroke: var(--ink); stroke-width: 2; pointer-events: none; }
+@media (max-width: 560px) {
+  header.top { flex-direction: column; }
+  .card { padding: 14px; }
+}
+@media (forced-colors: active) {
+  svg .mark { stroke: Canvas; }
+  svg .t, svg .t-ink { fill: CanvasText; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#explore">Skip to the charts</a>
+<header class="top">
+  <div>
+    <h1 id="title"></h1>
+    <p class="sub" id="subtitle"></p>
+  </div>
+  <button type="button" class="btn" id="theme" aria-label="Color theme: follow the system">Theme: auto</button>
+</header>
+<main>
+  <noscript><p class="err">This dashboard needs JavaScript to draw its charts.</p></noscript>
+  <ul class="tiles" id="tiles" aria-label="Summary of the table"></ul>
+
+  <section class="card" id="validation" aria-labelledby="v-title" hidden>
+    <div class="card-head">
+      <div>
+        <h2 id="v-title">Accuracy depends on how you validate</h2>
+        <p class="sub" id="v-sub"></p>
+      </div>
+      <button type="button" class="btn" id="v-toggle" aria-pressed="false" aria-controls="v-table">Table view</button>
+    </div>
+    <ul class="legend" id="v-legend" aria-label="Validation schemes"></ul>
+    <div class="fig" id="v-fig"></div>
+    <div class="tablebox" id="v-table" role="region" aria-label="Validation accuracy table" tabindex="0" hidden></div>
+    <p class="note" id="v-note"></p>
+  </section>
+
+  <form class="filters" id="filters" aria-label="Filters for the charts below">
+    <div>
+      <label class="k" for="feature">Feature</label>
+      <select id="feature"></select>
+    </div>
+    <fieldset>
+      <legend>Values</legend>
+      <div class="radios">
+        <label><input type="radio" name="norm" value="raw" checked> Raw</label>
+        <label><input type="radio" name="norm" value="z"> Z-score within subject</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Subjects <button type="button" class="mini" data-all="subjects">all</button><button type="button" class="mini" data-none="subjects">none</button></legend>
+      <div class="checks" id="subjects"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Labels <button type="button" class="mini" data-all="labels">all</button><button type="button" class="mini" data-none="labels">none</button></legend>
+      <div class="checks" id="labels"></div>
+    </fieldset>
+    <p class="status" id="status" aria-live="polite"></p>
+  </form>
+
+  <div id="explore">
+    <section class="card" id="strip" aria-labelledby="s-title">
+      <div class="card-head">
+        <div>
+          <h2 id="s-title">Feature by subject</h2>
+          <p class="sub" id="s-sub"></p>
+        </div>
+        <button type="button" class="btn" id="s-toggle" aria-pressed="false" aria-controls="s-table">Table view</button>
+      </div>
+      <ul class="legend" id="s-legend" aria-label="Labels"></ul>
+      <div class="fig" id="s-fig"></div>
+      <div class="tablebox" id="s-table" role="region" aria-label="Median by subject and label" tabindex="0" hidden></div>
+    </section>
+
+    <section class="card" id="dist" aria-labelledby="d-title">
+      <div class="card-head">
+        <div>
+          <h2 id="d-title">Feature by label</h2>
+          <p class="sub" id="d-sub"></p>
+        </div>
+        <button type="button" class="btn" id="d-toggle" aria-pressed="false" aria-controls="d-table">Table view</button>
+      </div>
+      <div class="fig" id="d-fig"></div>
+      <div class="tablebox" id="d-table" role="region" aria-label="Distribution by label table" tabindex="0" hidden></div>
+      <p class="note" id="d-note"></p>
+    </section>
+  </div>
+</main>
+<footer>
+  <p id="foot"></p>
+</footer>
+<div class="tip" id="tip" role="status" hidden></div>
+
+<script type="application/json" id="data">{{DATA}}</script>
+<script>
+(function () {
+"use strict";
+
+var NS = "http://www.w3.org/2000/svg";
+var D;
+try {
+  D = JSON.parse(document.getElementById("data").textContent);
+} catch (e) {
+  D = null;
+}
+function byId(id) { return document.getElementById(id); }
+
+/* ---------- small DOM helpers (all text goes through textContent) ---------- */
+function el(tag, attrs, kids) {
+  var node = document.createElement(tag);
+  setAttrs(node, attrs);
+  addKids(node, kids);
+  return node;
+}
+function sv(tag, attrs, kids) {
+  var node = document.createElementNS(NS, tag);
+  setAttrs(node, attrs);
+  addKids(node, kids);
+  return node;
+}
+function setAttrs(node, attrs) {
+  for (var k in attrs) {
+    if (!Object.prototype.hasOwnProperty.call(attrs, k) || attrs[k] === null || attrs[k] === undefined) continue;
+    if (k === "text") node.textContent = attrs[k];
+    else node.setAttribute(k, attrs[k]);
+  }
+}
+function addKids(node, kids) {
+  if (!kids) return;
+  for (var i = 0; i < kids.length; i++) {
+    node.appendChild(typeof kids[i] === "string" ? document.createTextNode(kids[i]) : kids[i]);
+  }
+}
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+if (!D) {
+  byId("title").textContent = "The data of this dashboard could not be read";
+  return;
+}
+
+/* ---------- colours: the series palette is validated; the chrome is in the CSS ---------- */
+var CAT = {
+  light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"],
+  dark: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#0ca30c", "#9085e9", "#e66767"]
+};
+var ORD = { /* one-hue ramps, validated with --ordinal against each surface (lowest step >= 2.9:1 light, 3.2:1 dark) */
+  light: { 3: ["#5598e7", "#256abf", "#0d366b"], 4: ["#5598e7", "#256abf", "#184f95", "#0d366b"] },
+  dark: { 3: ["#256abf", "#5598e7", "#9ec5f4"], 4: ["#256abf", "#3987e5", "#6da7ec", "#9ec5f4"] }
+};
+var SHAPES = ["circle", "square", "diamond", "up", "down", "pentagon", "hexagon", "plus"];
+var theme = { setting: "auto" };
+try { theme.setting = localStorage.getItem("biosigkit-theme") || "auto"; } catch (e) { /* file:// may refuse */ }
+var darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+function isDark() {
+  return theme.setting === "dark" || (theme.setting === "auto" && !!darkQuery && darkQuery.matches);
+}
+function mode() { return isDark() ? "dark" : "light"; }
+function labelColor(i) {
+  var n = D.labels.length;
+  if (D.label_scale === "ordinal" && ORD[mode()][n]) return ORD[mode()][n][i];
+  return CAT[mode()][i % CAT[mode()].length];
+}
+function seriesColor(i) { return CAT[mode()][i]; }
+
+/* ---------- numbers ---------- */
+function fmt(v, digits) {
+  if (v === null || v === undefined || !isFinite(v)) return "-";
+  var a = Math.abs(v);
+  if (a !== 0 && (a >= 1e6 || a < 1e-3)) return v.toExponential((digits || 4) - 1);
+  return String(Number(v.toPrecision(digits || 4)));
+}
+function pct(v) { return v === null || v === undefined ? "-" : (100 * v).toFixed(1) + "%"; }
+function niceTicks(lo, hi, target) {
+  if (!(hi > lo)) { var pad = Math.abs(lo) * 0.1 || 1; lo -= pad; hi += pad; }
+  var raw = (hi - lo) / Math.max(1, target);
+  var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  var norm = raw / mag;
+  var step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+  var ticks = [];
+  for (var v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) ticks.push(Number(v.toPrecision(12)));
+  return { ticks: ticks, step: step };
+}
+function tickText(step, extent) {
+  var big = Math.max(Math.abs(extent[0]), Math.abs(extent[1]));
+  if (big >= 1e5 || step < 1e-4) return function (v) { return v === 0 ? "0" : v.toExponential(1); };
+  var decimals = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
+  return function (v) { return v.toFixed(Math.min(decimals, 6)); };
+}
+function quantile(sorted, p) {
+  if (!sorted.length) return NaN;
+  var pos = (sorted.length - 1) * p, lo = Math.floor(pos), hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+function textWidth(s, px) { return String(s).length * (px || 12) * 0.56; }
+function jitter(i) {
+  var h = Math.imul(i + 1, 2654435761) >>> 0;
+  return ((h % 1000) / 1000) - 0.5;
+}
+
+/* ---------- marker shapes (area-balanced, centred on x, y) ---------- */
+function shapePath(kind, x, y, r) {
+  function poly(n, rot, k) {
+    var pts = [];
+    for (var i = 0; i < n; i++) {
+      var a = rot + (i * 2 * Math.PI) / n;
+      pts.push((x + k * Math.cos(a)).toFixed(2) + "," + (y + k * Math.sin(a)).toFixed(2));
+    }
+    return "M" + pts.join("L") + "Z";
+  }
+  switch (kind) {
+    case "square": var s = r * 0.9; return "M" + (x - s) + "," + (y - s) + "h" + 2 * s + "v" + 2 * s + "h" + -2 * s + "Z";
+    case "diamond": return poly(4, -Math.PI / 2, r * 1.3);
+    case "up": return poly(3, -Math.PI / 2, r * 1.3);
+    case "down": return poly(3, Math.PI / 2, r * 1.3);
+    case "pentagon": return poly(5, -Math.PI / 2, r * 1.1);
+    case "hexagon": return poly(6, 0, r * 1.1);
+    case "plus":
+      var t = r * 0.5, u = r * 1.25;
+      return "M" + (x - t) + "," + (y - u) + "h" + 2 * t + "v" + (u - t) + "h" + (u - t) + "v" + 2 * t + "h" + -(u - t) + "v" + (u - t) + "h" + -2 * t + "v" + -(u - t) + "h" + -(u - t) + "v" + -2 * t + "h" + (u - t) + "Z";
+    default: return "M" + (x - r) + "," + y + "a" + r + "," + r + " 0 1,0 " + 2 * r + ",0a" + r + "," + r + " 0 1,0 " + -2 * r + ",0Z";
+  }
+}
+var R = 4.5; /* 9 px marks */
+function mark(kind, x, y, color) {
+  return sv("path", { d: shapePath(kind, x, y, R), "class": "mark", style: "fill:" + color });
+}
+function swatch(kind, color) {
+  var s = sv("svg", { width: 16, height: 16, viewBox: "0 0 16 16", "aria-hidden": "true" });
+  s.appendChild(sv("path", { d: shapePath(kind, 8, 8, R), style: "fill:" + color }));
+  return s;
+}
+
+/* ---------- state ---------- */
+var S = {
+  feature: D.features.length ? D.features[0].name : null,
+  norm: "raw",
+  subjects: {},
+  labels: {},
+  width: 0
+};
+function resetFilters() {
+  S.feature = D.features.length ? D.features[0].name : null;
+  S.norm = "raw";
+  D.subjects.forEach(function (_, i) { S.subjects[i] = true; });
+  D.labels.forEach(function (_, i) { S.labels[i] = true; });
+}
+resetFilters();
+
+var zCache = {};
+function zValues(name) {
+  if (zCache[name]) return zCache[name];
+  var v = D.values[name], g = D.rows.subject, n = v.length, k = D.subjects.length;
+  var cnt = new Array(k).fill(0), sum = new Array(k).fill(0), ss = new Array(k).fill(0), i;
+  for (i = 0; i < n; i++) if (v[i] !== null) { cnt[g[i]]++; sum[g[i]] += v[i]; }
+  var mean = sum.map(function (s, j) { return cnt[j] ? s / cnt[j] : 0; });
+  for (i = 0; i < n; i++) if (v[i] !== null) { var d = v[i] - mean[g[i]]; ss[g[i]] += d * d; }
+  var sd = ss.map(function (s, j) { return cnt[j] ? Math.sqrt(s / cnt[j]) : 0; });
+  var out = v.map(function (x, j) { return x === null ? null : (sd[g[j]] > 0 ? (x - mean[g[j]]) / sd[g[j]] : 0); });
+  zCache[name] = out;
+  return out;
+}
+function etaSquared(points) {
+  if (points.length < 3) return null;
+  var k = D.labels.length, cnt = new Array(k).fill(0), sum = new Array(k).fill(0), tot = 0, i;
+  for (i = 0; i < points.length; i++) { cnt[points[i].l]++; sum[points[i].l] += points[i].v; tot += points[i].v; }
+  var grand = tot / points.length, used = 0, between = 0, total = 0;
+  for (i = 0; i < k; i++) if (cnt[i]) { used++; between += cnt[i] * Math.pow(sum[i] / cnt[i] - grand, 2); }
+  for (i = 0; i < points.length; i++) total += Math.pow(points[i].v - grand, 2);
+  return used < 2 || total <= 0 ? null : between / total;
+}
+/* the rows the filters leave, with the value to draw, and (for the note) both versions */
+function selection(norm) {
+  var raw = D.values[S.feature], z = zValues(S.feature), vals = norm === "z" ? z : raw, pts = [];
+  for (var i = 0; i < raw.length; i++) {
+    if (vals[i] === null || !S.subjects[D.rows.subject[i]] || !S.labels[D.rows.label[i]]) continue;
+    pts.push({ i: i, s: D.rows.subject[i], l: D.rows.label[i], v: vals[i], id: D.rows.id[i] });
+  }
+  return pts;
+}
+function chosen(map, n) {
+  var out = [];
+  for (var i = 0; i < n; i++) if (map[i]) out.push(i);
+  return out;
+}
+
+/* ---------- tooltip ---------- */
+var tip = byId("tip");
+function showTip(clientX, clientY, strong, lines) {
+  clear(tip);
+  tip.appendChild(el("strong", { text: strong }));
+  lines.forEach(function (ln) { tip.appendChild(el("span", { text: ln })); });
+  tip.hidden = false;
+  var w = tip.offsetWidth, h = tip.offsetHeight;
+  var x = clientX + 14, y = clientY + 14;
+  if (x + w > window.innerWidth - 8) x = clientX - w - 14;
+  if (y + h > window.innerHeight - 8) y = clientY - h - 14;
+  tip.style.left = Math.max(8, x) + "px";
+  tip.style.top = Math.max(8, y) + "px";
+}
+function hideTip() { tip.hidden = true; }
+function rowName(id) {
+  var name = D.id_name || "row";
+  return name.charAt(0).toUpperCase() + name.slice(1) + " " + id;
+}
+/* nearest-mark hover: the pointer only has to be close (24 px), not on the 9 px mark */
+function attachNearest(svg, hits, onHit) {
+  var ring = sv("circle", { "class": "hover", r: 9, cx: -50, cy: -50 });
+  svg.appendChild(ring);
+  function leave() { ring.setAttribute("cx", -50); ring.setAttribute("cy", -50); hideTip(); }
+  svg.addEventListener("pointermove", function (ev) {
+    var box = svg.getBoundingClientRect(), px = ev.clientX - box.left, py = ev.clientY - box.top;
+    var best = null, bd = 24 * 24;
+    for (var i = 0; i < hits.length; i++) {
+      var dx = hits[i].x - px, dy = hits[i].y - py, d = dx * dx + dy * dy;
+      if (d <= bd) { bd = d; best = hits[i]; }
+    }
+    if (!best) { leave(); return; }
+    ring.setAttribute("cx", best.x); ring.setAttribute("cy", best.y);
+    onHit(best, ev.clientX, ev.clientY);
+  });
+  svg.addEventListener("pointerleave", leave);
+}
+
+/* ---------- tables ---------- */
+function makeTable(caption, head, rows) {
+  var thead = el("thead", {}, [el("tr", {}, head.map(function (h) { return el("th", { scope: "col", text: h }); }))]);
+  var tbody = el("tbody", {}, rows.map(function (r) {
+    return el("tr", {}, r.map(function (c, j) { return j === 0 ? el("th", { scope: "row", text: c }) : el("td", { text: c }); }));
+  }));
+  return el("table", {}, [el("caption", { text: caption }), thead, tbody]);
+}
+function wireToggle(buttonId, figId, tableId, legendId) {
+  var b = byId(buttonId), f = byId(figId), t = byId(tableId), lg = legendId ? byId(legendId) : null;
+  b.addEventListener("click", function () {
+    var on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    f.hidden = on;
+    t.hidden = !on;
+    if (lg) lg.hidden = on;
+  });
+}
+
+/* ---------- axes ---------- */
+function yAxis(svg, scale, ticks, text, left, right) {
+  ticks.ticks.forEach(function (t) {
+    var y = scale(t);
+    svg.appendChild(sv("line", { "class": "grid", x1: left, x2: right, y1: y, y2: y }));
+    svg.appendChild(sv("text", { "class": "t", x: left - 8, y: y + 4, "text-anchor": "end", text: text(t) }));
+  });
+}
+function xAxis(svg, scale, ticks, text, top, bottom) {
+  ticks.ticks.forEach(function (t) {
+    var x = scale(t);
+    svg.appendChild(sv("line", { "class": "grid", x1: x, x2: x, y1: top, y2: bottom }));
+    svg.appendChild(sv("text", { "class": "t", x: x, y: bottom + 18, "text-anchor": "middle", text: text(t) }));
+  });
+}
+function linear(d0, d1, r0, r1) {
+  var f = function (v) { return r0 + ((v - d0) / (d1 - d0)) * (r1 - r0); };
+  return f;
+}
+function extent(points) {
+  var lo = Infinity, hi = -Infinity;
+  points.forEach(function (p) { if (p.v < lo) lo = p.v; if (p.v > hi) hi = p.v; });
+  var pad = (hi - lo) * 0.06 || Math.abs(lo) * 0.05 || 1;
+  return [lo - pad, hi + pad];
+}
+function unitText() {
+  return S.norm === "z" ? "z-score within subject" : "raw value";
+}
+
+/* ---------- chart: feature by subject ---------- */
+function drawStrip(points) {
+  var fig = byId("s-fig"), tbl = byId("s-table"), subs = chosen(S.subjects, D.subjects.length), labs = chosen(S.labels, D.labels.length);
+  clear(fig); clear(tbl);
+  if (!points.length) { fig.appendChild(el("p", { "class": "empty", text: "No rows match the filters." })); return; }
+  var W = Math.max(S.width, 320), left = 52, right = 14, top = 24, plotH = 300, bottom = 40;
+  var minCol = 11 * labs.length + 14;
+  var svgW = Math.max(W, left + right + subs.length * minCol), plotW = svgW - left - right;
+  var bandW = plotW / subs.length, subW = bandW / labs.length;
+  var ext = extent(points), ticks = niceTicks(ext[0], ext[1], 6), y = linear(ext[0], ext[1], top + plotH, top);
+  var svg = sv("svg", { width: svgW, height: top + plotH + bottom, role: "img", "aria-labelledby": "s-title s-desc" });
+  svg.appendChild(sv("desc", { id: "s-desc", text: "Dot chart of " + S.feature + " (" + unitText() + ") for " + points.length + " rows, one group of dots per subject, dots dodged and shaped by label. The table view lists the median per subject and label." }));
+  yAxis(svg, y, ticks, tickText(ticks.step, ext), left, left + plotW);
+  svg.appendChild(sv("text", { "class": "t", x: left - 8, y: 12, "text-anchor": "start", text: S.feature + " (" + unitText() + ")" }));
+  svg.appendChild(sv("line", { "class": "axisline", x1: left, x2: left + plotW, y1: top + plotH, y2: top + plotH }));
+  var every = Math.max(1, Math.ceil(46 / bandW));
+  var cell = {};
+  points.forEach(function (p) { var k = p.s + "|" + p.l; (cell[k] = cell[k] || []).push(p.v); });
+  var hits = [];
+  subs.forEach(function (s, si) {
+    var x0 = left + si * bandW;
+    if (si > 0) svg.appendChild(sv("line", { "class": "grid", x1: x0, x2: x0, y1: top, y2: top + plotH }));
+    if (si % every === 0) svg.appendChild(sv("text", { "class": "t-ink", x: x0 + bandW / 2, y: top + plotH + 18, "text-anchor": "middle", text: D.subjects[s] }));
+  });
+  var amp = Math.min(subW * 0.55, 9);
+  points.forEach(function (p) {
+    var si = subs.indexOf(p.s), li = labs.indexOf(p.l);
+    var x = left + si * bandW + (li + 0.5) * subW + jitter(p.i) * amp, yy = y(p.v);
+    svg.appendChild(mark(SHAPES[p.l % SHAPES.length], x, yy, labelColor(p.l)));
+    hits.push({ x: x, y: yy, p: p });
+  });
+  var tableRows = subs.map(function (s) { return [D.subjects[s]]; });
+  subs.forEach(function (s, si) {
+    labs.forEach(function (l, li) {
+      var cx = left + si * bandW + (li + 0.5) * subW, vals = cell[s + "|" + l] || [];
+      var sorted = vals.slice().sort(function (a, b) { return a - b; });
+      if (sorted.length) { /* the median tick sits on top of the dots */
+        var m = quantile(sorted, 0.5);
+        svg.appendChild(sv("line", { "class": "median", x1: cx - subW * 0.38, x2: cx + subW * 0.38, y1: y(m), y2: y(m) }));
+      }
+      tableRows[si].push(sorted.length ? fmt(quantile(sorted, 0.5)) + " (" + sorted.length + ")" : "-");
+    });
+  });
+  attachNearest(svg, hits, function (h, cx, cy) {
+    showTip(cx, cy, fmt(h.p.v) + (S.norm === "z" ? " (z)" : ""), [
+      "Subject " + D.subjects[h.p.s] + " · label " + D.labels[h.p.l], rowName(h.p.id)]);
+  });
+  fig.appendChild(svg);
+  tbl.appendChild(makeTable("Median (number of rows) of " + S.feature + ", " + unitText() + ", by subject and label",
+    ["Subject"].concat(labs.map(function (l) { return D.labels[l]; })), tableRows));
+}
+
+/* ---------- chart: feature by label ---------- */
+function drawDist(points) {
+  var fig = byId("d-fig"), tbl = byId("d-table"), labs = chosen(S.labels, D.labels.length);
+  clear(fig); clear(tbl);
+  if (!points.length) { fig.appendChild(el("p", { "class": "empty", text: "No rows match the filters." })); return; }
+  var names = labs.map(function (l) { return D.labels[l]; });
+  var left = 28 + Math.min(160, Math.max.apply(null, names.map(function (n) { return textWidth(n, 13); }))) + 12;
+  var W = Math.max(S.width, 320), right = 16, top = 8, rowH = 56, bottom = 40;
+  var plotW = W - left - right, plotH = labs.length * rowH;
+  var ext = extent(points), ticks = niceTicks(ext[0], ext[1], 6), x = linear(ext[0], ext[1], left, left + plotW);
+  var svg = sv("svg", { width: W, height: top + plotH + bottom, role: "img", "aria-labelledby": "d-title d-desc" });
+  svg.appendChild(sv("desc", { id: "d-desc", text: "Dot chart of " + S.feature + " (" + unitText() + ") with one row per label: dots for each row of the table, a band from the first to the third quartile and a tick at the median. The table view lists these numbers." }));
+  xAxis(svg, x, ticks, tickText(ticks.step, ext), top, top + plotH);
+  svg.appendChild(sv("line", { "class": "axisline", x1: left, x2: left + plotW, y1: top + plotH, y2: top + plotH }));
+  svg.appendChild(sv("text", { "class": "t", x: left + plotW, y: top + plotH + 36, "text-anchor": "end", text: S.feature + " (" + unitText() + ")" }));
+  var byLabel = {}, hits = [], rows = [];
+  points.forEach(function (p) { (byLabel[p.l] = byLabel[p.l] || []).push(p); });
+  labs.forEach(function (l, ri) {
+    var cy = top + ri * rowH + rowH / 2, arr = (byLabel[l] || []), vals = arr.map(function (p) { return p.v; }).sort(function (a, b) { return a - b; });
+    svg.appendChild(swatch(SHAPES[l % SHAPES.length], labelColor(l)));
+    var sw = svg.lastChild;
+    sw.setAttribute("x", 4); sw.setAttribute("y", cy - 8);
+    svg.appendChild(sv("text", { "class": "t-ink", x: 26, y: cy + 4, "font-size": 13, text: D.labels[l] }));
+    if (!vals.length) { rows.push([D.labels[l], "0", "-", "-", "-", "-", "-"]); return; }
+    var q1 = quantile(vals, 0.25), q2 = quantile(vals, 0.5), q3 = quantile(vals, 0.75);
+    svg.appendChild(sv("rect", { x: x(q1), y: cy - 14, width: Math.max(2, x(q3) - x(q1)), height: 28, rx: 4, style: "fill:" + labelColor(l) + ";fill-opacity:0.14" }));
+    rows.push([D.labels[l], String(vals.length), fmt(q2), fmt(q1), fmt(q3), fmt(vals[0]), fmt(vals[vals.length - 1])]);
+    arr.forEach(function (p) {
+      var px = x(p.v), py = cy + jitter(p.i + 7) * 24;
+      svg.appendChild(mark(SHAPES[l % SHAPES.length], px, py, labelColor(l)));
+      hits.push({ x: px, y: py, p: p });
+    });
+    svg.appendChild(sv("line", { "class": "median", x1: x(q2), x2: x(q2), y1: cy - 16, y2: cy + 16 }));
+  });
+  attachNearest(svg, hits, function (h, cx, cy) {
+    showTip(cx, cy, fmt(h.p.v) + (S.norm === "z" ? " (z)" : ""), [
+      "Label " + D.labels[h.p.l] + " · subject " + D.subjects[h.p.s], rowName(h.p.id)]);
+  });
+  fig.appendChild(svg);
+  tbl.appendChild(makeTable("Distribution of " + S.feature + ", " + unitText() + ", by label",
+    ["Label", "Rows", "Median", "Q1", "Q3", "Min", "Max"], rows));
+}
+
+/* ---------- chart: validation ---------- */
+function drawValidation() {
+  var V = D.validation, sec = byId("validation");
+  if (!V) { sec.hidden = true; return; }
+  sec.hidden = false;
+  var fig = byId("v-fig"), tbl = byId("v-table"), legend = byId("v-legend"), note = byId("v-note");
+  clear(fig); clear(tbl); clear(legend);
+  if (V.error) {
+    byId("v-sub").textContent = "Not computed for this table.";
+    fig.appendChild(el("p", { "class": "empty", text: V.error }));
+    byId("v-toggle").hidden = true;
+    note.textContent = "";
+    return;
+  }
+  byId("v-toggle").hidden = false;
+  var acc = {};
+  V.results.forEach(function (r) { acc[r.model + "|" + r.scenario] = r; });
+  V.scenarios.forEach(function (sc, i) {
+    legend.appendChild(el("li", {}, [swatch("circle", seriesColor(i)), sc.name + (sc.leaky ? " · a subject can sit in both train and test" : "")]));
+  });
+  var gaps = [];
+  V.models.forEach(function (m) {
+    var a = acc[m.key + "|kfold|none"], b = acc[m.key + "|loso|none"];
+    if (a && b && a.accuracy !== null && b.accuracy !== null) gaps.push((a.accuracy - b.accuracy) * 100);
+  });
+  var used = V.n_rows < D.n_rows ? V.n_rows + " of " + D.n_rows + " rows (the ones with every feature present)" : "all " + V.n_rows + " rows";
+  var sub = "Cross-validated on " + used + " when this file was made; the filters below do not change it.";
+  if (gaps.length) {
+    var lo = Math.min.apply(null, gaps), hi = Math.max.apply(null, gaps);
+    var s1 = (lo >= 0 ? "+" : "") + lo.toFixed(1), s2 = (hi >= 0 ? "+" : "") + hi.toFixed(1);
+    sub = "Random split minus leave-one-subject-out: " + (lo === hi ? s1 : s1 + " to " + s2) + " percentage points, depending on the model. " + sub;
+  }
+  byId("v-sub").textContent = sub;
+  var hasZ = V.scenarios.some(function (s) { return s.zscore; });
+  note.textContent = hasZ ? "The per-subject z-score uses the held-out subject’s own unlabeled rows, so a new subject needs a short calibration recording; it is not a model that never saw the subject." : "";
+
+  var W = Math.max(S.width, 320), names = V.models.map(function (m) { return m.name; });
+  var left = 16 + Math.min(150, Math.max.apply(null, names.map(function (n) { return textWidth(n, 13); }))), right = 52, top = 22, rowH = 46, bottom = 40;
+  var plotW = W - left - right, plotH = V.models.length * rowH;
+  var x = linear(0, 1, left, left + plotW);
+  var svg = sv("svg", { width: W, height: top + plotH + bottom, role: "img", "aria-labelledby": "v-title v-desc" });
+  svg.appendChild(sv("desc", { id: "v-desc", text: "Dot chart of accuracy, one row per model and one dot per validation scheme. The table view lists every value." }));
+  xAxis(svg, x, { ticks: [0, 0.2, 0.4, 0.6, 0.8, 1] }, function (t) { return Math.round(t * 100) + "%"; }, top, top + plotH);
+  svg.appendChild(sv("line", { "class": "axisline", x1: left, x2: left + plotW, y1: top + plotH, y2: top + plotH }));
+  if (V.baseline !== null) {
+    svg.appendChild(sv("line", { "class": "base", x1: x(V.baseline), x2: x(V.baseline), y1: top - 6, y2: top + plotH }));
+    svg.appendChild(sv("text", { "class": "t", x: x(V.baseline) + 5, y: top - 8, text: V.baseline_name + " " + Math.round(V.baseline * 100) + "%" }));
+  }
+  var hits = [], rows = [];
+  V.models.forEach(function (m, ri) {
+    var cy = top + ri * rowH + rowH / 2, vals = [];
+    svg.appendChild(sv("text", { "class": "t-ink", x: left - 12, y: cy + 4, "font-size": 13, "text-anchor": "end", text: m.name }));
+    var row = [m.name];
+    V.scenarios.forEach(function (sc, si) {
+      var r = acc[m.key + "|" + sc.key];
+      row.push(r ? pct(r.accuracy) : "-");
+      row.push(r ? pct(r.balanced_accuracy) : "-");
+      if (r && r.accuracy !== null) vals.push({ v: r.accuracy, si: si, r: r });
+    });
+    rows.push(row);
+    if (vals.length > 1) {
+      var mn = Math.min.apply(null, vals.map(function (d) { return d.v; })), mx = Math.max.apply(null, vals.map(function (d) { return d.v; }));
+      svg.appendChild(sv("line", { "class": "link", x1: x(mn), x2: x(mx), y1: cy, y2: cy }));
+    }
+    vals.forEach(function (d) {
+      svg.appendChild(mark("circle", x(d.v), cy, seriesColor(d.si)));
+      hits.push({ x: x(d.v), y: cy, m: m, sc: V.scenarios[d.si], r: d.r });
+    });
+    if (vals.length) {
+      var best = vals.reduce(function (a, b) { return b.v > a.v ? b : a; });
+      svg.appendChild(sv("text", { "class": "t-ink", x: x(best.v) + 12, y: cy + 4, text: pct(best.v) }));
+    }
+  });
+  attachNearest(svg, hits, function (h, cx, cy) {
+    showTip(cx, cy, pct(h.r.accuracy), [h.m.name + " · " + h.sc.name, "Balanced accuracy " + pct(h.r.balanced_accuracy)]);
+  });
+  fig.appendChild(svg);
+  var head = ["Model"];
+  V.scenarios.forEach(function (sc) { head.push(sc.name + ": accuracy"); head.push(sc.name + ": balanced"); });
+  tbl.appendChild(makeTable("Accuracy by model and validation scheme" + (V.baseline !== null ? " (" + V.baseline_name + " " + pct(V.baseline) + ")" : ""), head, rows));
+}
+
+/* ---------- page ---------- */
+function drawTiles() {
+  var t = byId("tiles");
+  clear(t);
+  var rowsNote = D.sampled_from ? "random sample of " + D.sampled_from : (D.dropped_rows ? D.dropped_rows + " without subject or label left out" : "");
+  [["Rows", String(D.n_rows), rowsNote], ["Subjects", String(D.subjects.length), ""], ["Labels", String(D.labels.length), D.labels.join(", ")], ["Features", String(D.features.length), ""]].forEach(function (x) {
+    t.appendChild(el("li", { "class": "tile" }, [el("div", { "class": "k", text: x[0] }), el("div", { "class": "v", text: x[1] }), el("div", { "class": "n", text: x[2] })]));
+  });
+}
+function buildFilters() {
+  var sel = byId("feature");
+  clear(sel);
+  D.features.forEach(function (f) {
+    var label = f.name + (f.eta_z === null ? "" : "  ·  " + Math.round(f.eta_z * 100) + "%");
+    sel.appendChild(el("option", { value: f.name, text: label }));
+  });
+  sel.value = S.feature;
+  [["subjects", D.subjects, S.subjects], ["labels", D.labels, S.labels]].forEach(function (g) {
+    var box = byId(g[0]);
+    clear(box);
+    g[1].forEach(function (name, i) {
+      var cb = el("input", { type: "checkbox", "data-group": g[0], "data-i": String(i) });
+      cb.checked = !!g[2][i];
+      box.appendChild(el("label", {}, [cb, name]));
+    });
+  });
+  var radios = document.querySelectorAll("input[name=norm]");
+  Array.prototype.forEach.call(radios, function (r) { r.checked = r.value === S.norm; });
+}
+function updateStatus(points) {
+  var subs = chosen(S.subjects, D.subjects.length).length, labs = chosen(S.labels, D.labels.length).length;
+  byId("status").textContent = "Showing " + points.length + " of " + D.n_rows + " rows (" + subs + " of " + D.subjects.length + " subjects, " + labs + " of " + D.labels.length + " labels). Features are listed by how well they separate the labels after the per-subject z-score (η², in %).";
+}
+function drawLegendStrip() {
+  var lg = byId("s-legend");
+  clear(lg);
+  chosen(S.labels, D.labels.length).forEach(function (l) {
+    lg.appendChild(el("li", {}, [swatch(SHAPES[l % SHAPES.length], labelColor(l)), D.labels[l]]));
+  });
+}
+function renderExplore() {
+  var raw = selection("raw"), shown = S.norm === "z" ? selection("z") : raw;
+  byId("s-sub").textContent = S.feature + ", " + unitText() + ". The tick is the median of each subject and label.";
+  byId("d-sub").textContent = S.feature + ", " + unitText() + ", all selected subjects together.";
+  drawLegendStrip();
+  drawStrip(shown);
+  drawDist(shown);
+  var er = etaSquared(raw), ez = etaSquared(selection("z"));
+  byId("d-note").textContent = er === null || ez === null ? "" :
+    "Label explains " + Math.round(er * 100) + "% of the variance in the raw values and " + Math.round(ez * 100) + "% after the z-score within each subject (η² over the selected rows; the z-score statistics come from all rows of each subject).";
+  updateStatus(shown);
+}
+function renderAll() {
+  var w = byId("explore").clientWidth - 36;
+  S.width = w > 0 ? w : S.width;
+  drawValidation();
+  renderExplore();
+}
+
+function applyTheme() {
+  var root = document.documentElement;
+  if (theme.setting === "auto") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", theme.setting);
+  var names = { auto: "follow the system", light: "light", dark: "dark" };
+  var b = byId("theme");
+  b.textContent = "Theme: " + theme.setting;
+  b.setAttribute("aria-label", "Color theme: " + names[theme.setting] + ". Activate to change.");
+}
+
+function init() {
+  byId("title").textContent = D.title;
+  document.title = D.title;
+  byId("subtitle").textContent = (D.source ? "Source: " + D.source + ". " : "") + "One file, nothing is loaded from the network.";
+  byId("foot").textContent = "Made with biosigkit " + D.version + ". Marks are drawn from the table embedded in this page; every chart has a table view.";
+  if (!D.features.length) { byId("explore").hidden = true; byId("filters").hidden = true; return; }
+  drawTiles();
+  buildFilters();
+  applyTheme();
+  wireToggle("v-toggle", "v-fig", "v-table", "v-legend");
+  wireToggle("s-toggle", "s-fig", "s-table", "s-legend");
+  wireToggle("d-toggle", "d-fig", "d-table");
+
+  byId("filters").addEventListener("submit", function (ev) { ev.preventDefault(); });
+  byId("feature").addEventListener("change", function (ev) { S.feature = ev.target.value; renderExplore(); });
+  byId("filters").addEventListener("change", function (ev) {
+    var t = ev.target;
+    if (t.name === "norm") { S.norm = t.value; renderExplore(); }
+    else if (t.getAttribute("data-group")) { S[t.getAttribute("data-group")][t.getAttribute("data-i")] = t.checked; renderExplore(); }
+  });
+  byId("filters").addEventListener("click", function (ev) {
+    var t = ev.target, g = t.getAttribute && (t.getAttribute("data-all") || t.getAttribute("data-none"));
+    if (!g) return;
+    var on = !!t.getAttribute("data-all"), n = D[g].length;
+    for (var i = 0; i < n; i++) S[g][i] = on;
+    Array.prototype.forEach.call(byId(g).querySelectorAll("input"), function (cb) { cb.checked = on; });
+    renderExplore();
+  });
+  byId("theme").addEventListener("click", function () {
+    var next = { auto: "light", light: "dark", dark: "auto" };
+    theme.setting = next[theme.setting] || "auto";
+    try { localStorage.setItem("biosigkit-theme", theme.setting); } catch (e) { /* ignore */ }
+    applyTheme();
+    renderAll();
+  });
+  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener("change", function () { if (theme.setting === "auto") renderAll(); });
+  var pending = 0;
+  function onResize() {
+    if (pending) return;
+    pending = window.requestAnimationFrame(function () {
+      pending = 0;
+      var w = byId("explore").clientWidth - 36;
+      if (w > 0 && Math.abs(w - S.width) >= 1) renderAll();
+    });
+  }
+  if (window.ResizeObserver) new ResizeObserver(onResize).observe(byId("explore")); else window.addEventListener("resize", onResize);
+  renderAll();
+}
+init();
+})();
+</script>
+</body>
+</html>
