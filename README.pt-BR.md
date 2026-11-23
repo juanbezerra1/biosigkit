@@ -43,7 +43,8 @@ honesta, e padronizar (z-score) as features de cada sujeito remove as diferença
 | Checagem dos dados | Relatório de qualidade por canal (saturação, trechos planos, NaN, fração de potência da rede elétrica), checagem de tentativas que diz *por que* uma foi rejeitada, gravações duplicadas encontradas por hash do conteúdo |
 | Aprendizado de máquina | LOSO, k-fold por grupo e (para contraste) k-fold ingênuo; normalização ajustada dentro de cada fold; z-score por sujeito; LDA / SVM / random forest / regressão logística; comparação de cenários |
 | SQL | Esquema SQLite (sujeitos → gravações → segmentos → features), consultas parametrizadas, sete consultas didáticas (funções de janela, CTEs, gaps-and-islands...) |
-| Linha de comando | `biosigkit demo \| features \| qc \| duplicates \| evaluate \| sql` |
+| Dashboard | Um arquivo HTML para explorar uma tabela de features: uma feature por sujeito e por rótulo, bruta ou com z-score, ao lado do gráfico de validação; visão de tabela, filtros pelo teclado, modo claro e escuro |
+| Linha de comando | `biosigkit demo \| features \| qc \| duplicates \| export \| dashboard \| evaluate \| sql` |
 | Dados sintéticos | EMG de controle de força com variabilidade entre sujeitos, deriva de ganho entre tentativas e interferência da rede; EEG com dessincronização alfa relacionada à tarefa |
 
 ## Instalação
@@ -210,6 +211,32 @@ biosigkit features rec.csv --fs 1000 --events trials.csv --mode trial --trim 1 \
     --check-quality --on-invalid skip --rejected-out rejected.csv
 ```
 
+## Explorando a tabela
+
+`biosigkit dashboard` transforma uma tabela de features em **um único arquivo HTML** (sem servidor, sem rede, sem
+dependência extra): uma feature por vez, por sujeito e por rótulo, bruta ou com z-score dentro de cada sujeito, ao lado
+da acurácia de cada esquema de validação. **[Demonstração ao vivo](https://juanbezerra1.github.io/biosigkit/dashboard-demo.html)**
+(a coorte sintética acima; a página está em inglês).
+
+![Dashboard da coorte sintética](docs/img/dashboard.png)
+
+```bash
+biosigkit demo --out demo_output                                    # também escreve demo_output/dashboard.html
+biosigkit dashboard features.csv -o dashboard.html                  # qualquer tabela com sujeito, rótulo e colunas numéricas
+biosigkit export demo_output/biosigkit_demo.sqlite -o features.csv  # a tabela de features de um banco, em CSV
+```
+
+- As features são ordenadas por η² depois do z-score por sujeito (a parte da variância que o rótulo explica). Abaixo
+  dos gráficos a página mostra também o η² dos valores brutos, que é como se vê a diferença entre sujeitos escondendo o efeito.
+- Todo gráfico tem uma visão de tabela, os filtros (feature, bruto ou z-score, sujeitos, rótulos) funcionam pelo
+  teclado, e a página segue o modo claro/escuro do sistema; um botão troca.
+- Três ou quatro rótulos que parecem números (`10%`, `20 N`) usam um só tom e variam na luminosidade; os demais (até 8)
+  usam tons distintos. O formato do marcador também muda por rótulo, então a cor nunca é a única pista.
+- O gráfico de validação faz a validação cruzada uma vez, quando o arquivo é gerado, e os filtros não o alteram. Em
+  tabelas grandes é a parte lenta: `--models lda` ou `--no-validation` pula quase tudo ou tudo.
+- Tabelas com mais de 5000 linhas são amostradas ao acaso (`--max-rows`) e a página avisa. Em Python:
+  `write_dashboard(tabela, "dashboard.html")`; `dashboard_data` devolve o JSON por trás da página.
+
 ## Decisões de projeto
 
 - **Sinais imutáveis, proveniência registrada.** Toda operação devolve um novo `Signal`. O `preprocess` escreve o que
@@ -263,6 +290,8 @@ biosigkit sql run demo_output/biosigkit_demo.sqlite -q "SELECT feature, COUNT(*)
 | `biosigkit features SINAL.csv [--events EVENTOS.csv] [--mode window\|trial] [--kind emg\|eeg]` | Pré-processa uma gravação e escreve a tabela de features (`--fs` ou `--time-col` dá a taxa de amostragem). O modo trial também aceita `--on-invalid skip`, `--check-quality` e `--rejected-out ARQUIVO` |
 | `biosigkit qc SINAL.csv [--strict] [-o ARQUIVO]` | Relatório de qualidade por canal; `--strict` sai com código 1 se algum canal tiver problema |
 | `biosigkit duplicates A.csv B.csv ... [--strict]` | Gravações (ou canais) que têm exatamente as mesmas amostras |
+| `biosigkit export BANCO.sqlite [--kind trial\|window] [-o ARQUIVO]` | Escreve em CSV a tabela de features guardada em um banco (entrada de `evaluate` e `dashboard`) |
+| `biosigkit dashboard FEATURES.csv\|BANCO.sqlite [-o ARQUIVO.html] [--labels A,B] [--features X,Y] [--models lda,rf] [--no-validation]` | Uma página HTML autônoma para explorar a tabela (sem servidor, sem rede) |
 | `biosigkit evaluate FEATURES.csv [--model lda\|svm_rbf\|svm_linear\|rf\|logreg] [--scheme loso\|group_kfold\|kfold] [--normalize]` | Valida sem vazamento entre sujeitos e imprime métricas e matriz de confusão |
 | `biosigkit sql list \| show NOME \| run BANCO (-e NOME \| -q "SELECT ...")` | SQL embutido e consultas livres |
 
@@ -280,14 +309,15 @@ src/biosigkit/
 ├── windowing.py    janelas deslizantes, tabelas de eventos, épocas
 ├── tables.py       tabelas de features, longo/largo, resumos
 ├── ml.py           validação cruzada sem vazamento, z-score por sujeito
+├── dashboard.py  dashboard.html    página de um arquivo para explorar uma tabela de features
 ├── storage.py      esquema SQLite, salvar/carregar, consultas parametrizadas
 ├── sql/            schema.sql e as sete consultas didáticas
 ├── synthetic.py    sessões e coortes simuladas
 ├── viz.py          figuras (API Figure do matplotlib, paleta segura para daltonismo)
 └── demo.py  cli.py  __main__.py
 tests/              suíte pytest, um arquivo por módulo
-examples/           quickstart.py (o trecho acima), data_checks.py
-docs/img/           figuras usadas neste README
+examples/           quickstart.py (o trecho acima), data_checks.py, build_dashboard_demo.py
+docs/               img/ (figuras usadas neste README), dashboard-demo.html (a demonstração ao vivo)
 ```
 
 ## Desenvolvimento
@@ -308,6 +338,8 @@ mais antigas suportadas das dependências.
 - Tudo aqui é **simulado**. Os números verificam que o código faz o que diz; não dizem nada sobre o desempenho de
   qualquer classificador em gravações reais.
 - Não é uma ferramenta clínica nem um dispositivo médico.
+- O dashboard serve para olhar uma tabela, não para testar nada. O ranking por η² é calculado nas linhas que ele
+  mostra; não escolha features por ele e valide nas mesmas linhas: a seleção deve ficar dentro de cada fold de treino.
 - Apenas análise offline (filtros de fase zero são não causais).
 - Não tenta substituir o [MNE-Python](https://mne.tools) (análise de EEG/MEG) nem o
   [NeuroKit2](https://neuropsychology.github.io/NeuroKit/) (processamento de sinais fisiológicos). Cobre um caminho

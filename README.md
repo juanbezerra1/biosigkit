@@ -44,7 +44,8 @@ is the honest estimate, and z-scoring each subject's features removes the gain d
 | Data checks | Per-channel quality report (clipping, flat lines, NaN, mains share of power), trial checks that say *why* a trial was rejected, duplicate recordings found by content hash |
 | Machine learning | LOSO, group k-fold and (for contrast) naive k-fold; scaling fitted inside each fold; within-subject z-score; LDA / SVM / random forest / logistic regression; scenario comparison |
 | SQL | SQLite schema (subjects → recordings → segments → features), parameterised queries, seven teaching queries (window functions, CTEs, gaps-and-islands, ...) |
-| Command line | `biosigkit demo \| features \| qc \| duplicates \| evaluate \| sql` |
+| Dashboard | One HTML file to explore a feature table: a feature by subject and by label, raw or z-scored, next to the validation chart; table views, keyboard filters, light and dark |
+| Command line | `biosigkit demo \| features \| qc \| duplicates \| export \| dashboard \| evaluate \| sql` |
 | Synthetic data | Force-matching EMG with inter-subject variability, trial-to-trial gain drift and mains interference; EEG with task-related alpha desynchronisation |
 
 ## Install
@@ -210,6 +211,32 @@ biosigkit features rec.csv --fs 1000 --events trials.csv --mode trial --trim 1 \
     --check-quality --on-invalid skip --rejected-out rejected.csv
 ```
 
+## Exploring the table
+
+`biosigkit dashboard` turns a feature table into **one HTML file** (no server, no network, no extra dependency):
+one feature at a time, by subject and by label, raw or z-scored within each subject, next to the accuracy each
+validation scheme gives. **[Live demo](https://juanbezerra1.github.io/biosigkit/dashboard-demo.html)** (the synthetic
+cohort above).
+
+![Dashboard of the synthetic cohort](docs/img/dashboard.png)
+
+```bash
+biosigkit demo --out demo_output                                    # also writes demo_output/dashboard.html
+biosigkit dashboard features.csv -o dashboard.html                  # any table with subject, label and numeric columns
+biosigkit export demo_output/biosigkit_demo.sqlite -o features.csv  # a database's feature table, as a CSV
+```
+
+- Features are ranked by η² after the per-subject z-score (the share of the variance that the label explains). Under
+  the charts the page also gives η² for the raw values, which is how you see between-subject differences hiding an effect.
+- Every chart has a table view, the filters (feature, raw or z-score, subjects, labels) work from the keyboard, and the
+  page follows the system light/dark setting; a button overrides it.
+- Three or four labels that look like numbers (`10%`, `20 N`) share one hue and differ in lightness; any other labels
+  (up to 8) get distinct hues. Marker shapes differ by label too, so colour is never the only cue.
+- The validation chart cross-validates once, when the file is made, and the filters do not change it. That is the slow
+  part for big tables: `--models lda` or `--no-validation` skips most or all of it.
+- A table of more than 5000 rows is sampled at random (`--max-rows`) and the page says so. From Python:
+  `write_dashboard(table, "dashboard.html")`; `dashboard_data` returns the JSON behind the page.
+
 ## Design decisions
 
 - **Immutable signals, recorded provenance.** Every operation returns a new `Signal`. `preprocess` writes what
@@ -262,6 +289,8 @@ biosigkit sql run demo_output/biosigkit_demo.sqlite -q "SELECT feature, COUNT(*)
 | `biosigkit features SIGNAL.csv [--events EVENTS.csv] [--mode window\|trial] [--kind emg\|eeg]` | Preprocess a recording and write a feature table (`--fs` or `--time-col` gives the sampling rate). Trial mode also takes `--on-invalid skip`, `--check-quality` and `--rejected-out FILE` |
 | `biosigkit qc SIGNAL.csv [--strict] [-o FILE]` | Per-channel quality report; `--strict` exits with status 1 if a channel has an issue |
 | `biosigkit duplicates A.csv B.csv ... [--strict]` | Recordings (or channels) that hold exactly the same samples |
+| `biosigkit export DB.sqlite [--kind trial\|window] [-o FILE]` | Write the feature table stored in a database to a CSV (input of `evaluate` and `dashboard`) |
+| `biosigkit dashboard FEATURES.csv\|DB.sqlite [-o FILE.html] [--labels A,B] [--features X,Y] [--models lda,rf] [--no-validation]` | One self-contained HTML page to explore the table (no server, no network) |
 | `biosigkit evaluate FEATURES.csv [--model lda\|svm_rbf\|svm_linear\|rf\|logreg] [--scheme loso\|group_kfold\|kfold] [--normalize]` | Cross-validate without subject leakage and print metrics and a confusion matrix |
 | `biosigkit sql list \| show NAME \| run DB (-e NAME \| -q "SELECT ...")` | Bundled and ad-hoc SQL |
 
@@ -279,14 +308,15 @@ src/biosigkit/
 ├── windowing.py    sliding windows, event tables, epochs
 ├── tables.py       tidy feature tables, long/wide, summaries
 ├── ml.py           leakage-aware cross-validation, within-subject z-score
+├── dashboard.py  dashboard.html    one-file page to explore a feature table
 ├── storage.py      SQLite schema, save/load, parameterised queries
 ├── sql/            schema.sql and the seven teaching queries
 ├── synthetic.py    simulated sessions and cohorts
 ├── viz.py          figures (matplotlib Figure API, colour-blind-safe palette)
 └── demo.py  cli.py  __main__.py
 tests/              pytest suite, one file per module
-examples/           quickstart.py (the snippet above), data_checks.py
-docs/img/           figures used in this README
+examples/           quickstart.py (the snippet above), data_checks.py, build_dashboard_demo.py
+docs/               img/ (figures used in this README), dashboard-demo.html (the live demo)
 ```
 
 ## Development
@@ -307,6 +337,8 @@ with the oldest supported versions of the dependencies.
 - Everything here is **simulated**. The numbers verify that the code does what it claims; they say nothing about
   how well any classifier works on real recordings.
 - Not a clinical or medical-device tool.
+- The dashboard is for looking at a table, not for testing anything. Its η² ranking is computed on the rows it
+  shows, so do not pick features by it and then validate on the same rows; select inside each training fold.
 - Offline analysis only (zero-phase filters are non-causal).
 - It does not try to replace [MNE-Python](https://mne.tools) (EEG/MEG analysis) or
   [NeuroKit2](https://neuropsychology.github.io/NeuroKit/) (physiological signal processing). It covers a
