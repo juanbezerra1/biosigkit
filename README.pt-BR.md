@@ -231,8 +231,9 @@ ruff check . && ruff format --check .
 mypy src
 ```
 
-O CI roda os testes no Python 3.10 a 3.13, lint e tipos, e constrói o wheel e roda a demonstração em um ambiente
-limpo. A suíte também passa com as versões mais antigas suportadas das dependências.
+O CI roda os testes no Python 3.10 a 3.13 (Linux) e nos Python 3.10 e 3.13 (Windows), lint e tipos, e constrói o
+wheel e roda a demonstração em um ambiente limpo, no Linux e no Windows. A suíte também passa com as versões
+mais antigas suportadas das dependências.
 
 ## Escopo e limitações
 

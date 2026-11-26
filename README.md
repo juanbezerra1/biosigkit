@@ -231,8 +231,9 @@ ruff check . && ruff format --check .
 mypy src
 ```
 
-CI runs the tests on Python 3.10 to 3.13, lint and types, and builds the wheel and runs the demo from a clean
-environment. The suite also passes with the oldest supported versions of the dependencies.
+CI runs the tests on Python 3.10 to 3.13 (Linux) and on Python 3.10 and 3.13 (Windows), lint and types, and
+builds the wheel and runs the demo from a clean environment on Linux and on Windows. The suite also passes
+with the oldest supported versions of the dependencies.
 
 ## Scope and limitations
 
