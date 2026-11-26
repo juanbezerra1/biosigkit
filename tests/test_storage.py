@@ -28,6 +28,7 @@ EXAMPLES = [
     "top_trials_per_subject",
     "data_quality",
     "missing_values",
+    "duplicate_recordings",
 ]
 
 
@@ -58,6 +59,8 @@ def db(tables, conn):
     windows, trials = tables
     save_feature_table(conn, windows, kind="window")
     save_feature_table(conn, trials, kind="trial")
+    for subject in ("S01", "S02"):  # the same samples under two names, for the duplicates query
+        register_recording(conn, subject, "S1", content_sha256="ab" * 32)
     return conn
 
 

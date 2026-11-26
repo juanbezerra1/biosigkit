@@ -25,8 +25,13 @@ def _sql_dir() -> Any:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create the tables and indexes if they do not exist yet."""
+    """Create the tables and indexes if they do not exist yet, and upgrade an older database."""
     conn.executescript((_sql_dir() / "schema.sql").read_text(encoding="utf-8"))
+    # Databases made by biosigkit 0.1 have no content hash: add the column rather than fail.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(recordings)")}
+    if "content_sha256" not in columns:
+        conn.execute("ALTER TABLE recordings ADD COLUMN content_sha256 TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_recordings_hash ON recordings (content_sha256)")
     conn.commit()
 
 
@@ -45,8 +50,10 @@ def register_recording(
     *,
     fs: float | None = None,
     preprocess: Mapping[str, Any] | None = None,
+    content_sha256: str | None = None,
 ) -> int:
-    """Insert the subject/recording if new, optionally store ``fs`` and preprocessing provenance.
+    """Insert the subject/recording if new, optionally store ``fs``, preprocessing provenance
+    and the content hash of the samples (:func:`biosigkit.duplicates.signal_hash`).
 
     Returns the ``recording_id``. Existing values are only overwritten by non-``None`` arguments.
     """
@@ -56,13 +63,16 @@ def register_recording(
             "INSERT OR IGNORE INTO recordings (subject_id, session) VALUES (?, ?)",
             (subject, session),
         )
-        if fs is not None or preprocess is not None:
+        if fs is not None or preprocess is not None or content_sha256 is not None:
             conn.execute(
                 "UPDATE recordings SET fs_hz = COALESCE(?, fs_hz), "
-                "preprocess = COALESCE(?, preprocess) WHERE subject_id = ? AND session = ?",
+                "preprocess = COALESCE(?, preprocess), "
+                "content_sha256 = COALESCE(?, content_sha256) "
+                "WHERE subject_id = ? AND session = ?",
                 (
                     fs,
                     None if preprocess is None else json.dumps(preprocess, default=str),
+                    content_sha256,
                     subject,
                     session,
                 ),

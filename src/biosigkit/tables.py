@@ -14,6 +14,7 @@ import pandas as pd
 
 from .emg import emg_features
 from .signals import Signal
+from .trials import REASONS, geometry_problem, trial_samples
 from .windowing import sliding_windows, validate_events
 
 SEP = "_"
@@ -107,22 +108,38 @@ def trial_feature_table(
     """One row per event (trial): features over ``[onset + trim_s, offset - trim_s]``.
 
     Extra event columns (e.g. ``level``) are carried into the table. Use ``trim_s`` to drop ramp
-    phases at the edges of a trial.
+    phases at the edges of a trial (or :func:`biosigkit.trials.plateau_events` to find the hold
+    phase instead).
+
+    A trial that lies outside the recording or is too short after trimming raises a
+    ``ValueError`` that says which one and why (``on_invalid="raise"``), or is skipped
+    (``on_invalid="skip"``). Nothing is skipped silently: ``table.attrs["rejected"]`` lists the
+    rejected trials (``trial``, ``onset``, ``offset``, ``label`` and ``reason``), empty if there
+    were none. pandas drops ``attrs`` when tables with different ones are concatenated, so read it
+    before ``pd.concat``. For the data-quality checks (NaN, flat lines, clipping) see
+    :func:`biosigkit.trials.check_trials`.
     """
     fn = feature_fn or emg_features
     ev = validate_events(events)
     extra = [c for c in ev.columns if c not in ("onset", "offset", "label")]
     info: list[dict[str, Any]] = []
     per_trial: list[Mapping[str, np.ndarray]] = []
+    rejected: list[dict[str, Any]] = []
     for i, rec in enumerate(ev.to_dict("records")):
-        a = round((rec["onset"] + trim_s - sig.t0) * sig.fs)
-        b = round((rec["offset"] - trim_s - sig.t0) * sig.fs)
-        if a < 0 or b > sig.n_samples or b - a < 2:
+        a, b = trial_samples(sig, rec["onset"], rec["offset"], trim_s)
+        problem = geometry_problem(sig, a, b)
+        if problem is not None:
             if on_invalid == "raise":
-                raise ValueError(
-                    f"trial {i} ({rec['onset']}-{rec['offset']} s) lies outside the recording "
-                    "or is too short after trimming"
-                )
+                raise ValueError(f"trial {i} ({rec['onset']}-{rec['offset']} s) {REASONS[problem]}")
+            rejected.append(
+                {
+                    "trial": i,
+                    "onset": rec["onset"],
+                    "offset": rec["offset"],
+                    "label": rec["label"],
+                    "reason": problem,
+                }
+            )
             continue
         feats = fn(sig.data[None, :, a:b], sig.fs)
         per_trial.append({k: np.asarray(v, dtype=float)[0] for k, v in feats.items()})
@@ -136,10 +153,13 @@ def trial_feature_table(
             }
         )
     if not info:
-        raise ValueError("no valid trials found")
+        why = ", ".join(sorted({r["reason"] for r in rejected}))
+        raise ValueError(f"no valid trials found ({why})" if why else "no valid trials found")
     stacked = {k: np.stack([t[k] for t in per_trial]) for k in per_trial[0]}
     table = pd.concat([pd.DataFrame(info), _feature_frame(stacked, sig.channels)], axis=1)
-    return _with_meta(table, meta)
+    table = _with_meta(table, meta)
+    table.attrs["rejected"] = rejected
+    return table
 
 
 def infer_feature_columns(
