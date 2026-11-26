@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import runpy
 from contextlib import closing
 from pathlib import Path
@@ -40,6 +41,7 @@ def test_demo_writes_every_artifact(demo):
         "force_tracking_trials.csv",
         "qc.csv",
         "trial_checks.csv",
+        "dashboard.html",
         "biosigkit_demo.sqlite",
     ):
         assert (out / name).stat().st_size > 0, name
@@ -85,10 +87,26 @@ def test_demo_data_checks_find_nothing_wrong_in_clean_simulated_data(demo):
 
 def test_demo_text_files_are_utf8_with_unix_newlines(demo):
     out, _, _ = demo
-    for name in ("report.md", "summary.json"):
+    for name in ("report.md", "summary.json", "dashboard.html"):
         raw = (out / name).read_bytes()
         raw.decode("utf-8")  # raises if the file was written in the platform's default encoding
         assert b"\r" not in raw, name
+
+
+def test_demo_dashboard_shows_the_numbers_of_the_demo_run(demo):
+    out, summary, _ = demo
+    page = (out / "dashboard.html").read_text(encoding="utf-8")
+    match = re.search(r'<script type="application/json" id="data">(.*?)</script>', page, re.S)
+    assert match
+    data = json.loads(match.group(1))
+    assert data["n_rows"] == N_TRIALS and len(data["subjects"]) == N_SUBJECTS
+    assert data["labels"] == ["10%", "30%", "50%", "70%"] and data["label_scale"] == "ordinal"
+    # the validation chart reuses the demo's cross-validation instead of running it again
+    shown = {(r["model"], r["scenario"]): r["accuracy"] for r in data["validation"]["results"]}
+    for row in summary["scenarios"]:
+        key = (row["model"], f"{row['scheme']}|{row['normalization']}")
+        assert shown[key] == pytest.approx(row["accuracy"], abs=1e-5)
+    assert "dashboard.html" in (out / "report.md").read_text(encoding="utf-8")
 
 
 def test_demo_hashes_every_recording_and_finds_no_duplicates(demo):
