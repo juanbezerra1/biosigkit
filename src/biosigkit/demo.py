@@ -14,11 +14,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .duplicates import find_duplicates, signal_hash
 from .eeg import BANDS, band_power, erd_percent, psd, reject_by_ptp
 from .emg import baseline_threshold, detect_activations, emg_features, linear_envelope
 from .force import steadiness_cv, tracking_error
 from .ml import compare_scenarios, cross_validate, within_group_zscore
 from .preprocess import EEG_PRESET, EMG_PRESET, preprocess
+from .quality import signal_quality
 from .storage import (
     connect,
     list_examples,
@@ -30,6 +32,7 @@ from .storage import (
 )
 from .synthetic import Session, make_cohort, make_eeg
 from .tables import infer_feature_columns, summarize, trial_feature_table, window_feature_table
+from .trials import check_trials, plateau_events
 from .viz import plot_confusion, plot_eeg_erd, plot_emg_overview, plot_scenarios, save_figure
 from .windowing import make_epochs
 
@@ -85,6 +88,34 @@ def _detection_stats(events: pd.DataFrame, acts: pd.DataFrame) -> dict[str, Any]
     }
 
 
+def _data_checks(
+    cohort: list[Session], qc: pd.DataFrame, trial_checks: pd.DataFrame
+) -> dict[str, Any]:
+    """Numbers for the "Data checks" section: quality, trial validity, force plateau, duplicates."""
+    held, fixed = [], []
+    n_found = n_trials = 0
+    for s in cohort:
+        plateau = plateau_events(s.events, s.force)
+        n_trials += len(plateau)
+        n_found += int(plateau["plateau"].sum())
+        held += (plateau["offset"] - plateau["onset"])[plateau["plateau"]].tolist()
+        fixed += (s.events["offset"] - s.events["onset"] - 2 * TRIM_S).tolist()
+    copies = find_duplicates({s.subject: s.emg for s in cohort})
+    return {
+        "channels_checked": len(qc),
+        "channels_ok": int(qc["ok"].sum()),
+        "max_mains_fraction": float(qc["mains_fraction"].max()),
+        "max_saturated_fraction": float(qc["saturated_fraction"].max()),
+        "trials_checked": len(trial_checks),
+        "trials_valid": int(trial_checks["valid"].sum()),
+        "plateau_found": n_found,
+        "plateau_trials": n_trials,
+        "median_hold_s": float(np.median(held)) if held else float("nan"),
+        "median_fixed_trim_window_s": float(np.median(fixed)) if fixed else float("nan"),
+        "duplicate_groups": len(copies),
+    }
+
+
 def _eeg_demo(out: Path, seed: int) -> dict[str, Any]:
     sig, events = make_eeg(n_trials=20, seed=seed + 1, line_uv=3.0)
     clean = preprocess(sig, EEG_PRESET)
@@ -132,6 +163,7 @@ def _markdown_table(df: pd.DataFrame, fmt: str = "{:.3f}") -> str:
 
 def _report(summary: dict[str, Any], results: pd.DataFrame, tracking: pd.DataFrame) -> str:
     det = summary["detection"]
+    chk = summary["checks"]
     shown = results[
         ["model", "scheme", "normalization", "accuracy", "balanced_accuracy", "f1_macro"]
     ]
@@ -166,6 +198,19 @@ def _report(summary: dict[str, Any], results: pd.DataFrame, tracking: pd.DataFra
         "## EEG alpha ERD (task vs rest)",
         "",
         *[f"- {ch}: {v:.1f}%" for ch, v in summary["eeg"]["alpha_erd_percent"].items()],
+        "",
+        "## Data checks (raw EMG, before preprocessing)",
+        "",
+        f"- Signal quality: {chk['channels_ok']}/{chk['channels_checked']} channels pass "
+        f"(largest mains share of power {chk['max_mains_fraction']:.1%}, "
+        f"largest clipped share {chk['max_saturated_fraction']:.2%}); per channel in `qc.csv`",
+        f"- Trials: {chk['trials_valid']}/{chk['trials_checked']} valid; a rejected trial would "
+        "be listed with its reason in `trial_checks.csv`",
+        f"- Force plateau found in {chk['plateau_found']}/{chk['plateau_trials']} trials, median "
+        f"hold {chk['median_hold_s']:.1f} s (the fixed {TRIM_S:g} s trim above keeps "
+        f"{chk['median_fixed_trim_window_s']:.1f} s)",
+        f"- Duplicate recordings: {chk['duplicate_groups']} groups among the subjects "
+        "(`sql/duplicate_recordings.csv`)",
         "",
         "## SQL",
         "",
@@ -203,13 +248,18 @@ def run_demo(
     conn = connect(db_path)
     trial_fn = partial(emg_features, names=TRIAL_FEATURES)
     window_tables, trial_tables, tracking, detection = [], [], [], []
+    qc_tables, check_tables = [], []
     mains: dict[str, list[float]] = {}
     overview = None
     for s in cohort:
         emg = preprocess(s.emg, EMG_PRESET)
         info = emg.meta["preprocess"]
         mains[s.subject] = info["notch_applied_hz"]
-        register_recording(conn, s.subject, "S1", fs=emg.fs, preprocess=info)
+        register_recording(
+            conn, s.subject, "S1", fs=emg.fs, preprocess=info, content_sha256=signal_hash(s.emg)
+        )
+        qc_tables.append(signal_quality(s.emg, meta={"subject": s.subject}))
+        check_tables.append(check_trials(s.emg, s.events, trim_s=TRIM_S).assign(subject=s.subject))
         meta = {"subject": s.subject, "session": "S1"}
         window_tables.append(
             window_feature_table(emg, win_s=0.2, step_s=0.1, events=s.events, meta=meta)
@@ -227,6 +277,10 @@ def run_demo(
         if overview is None:
             thr = baseline_threshold(env.data[0], env.fs, baseline, k=3.0)
             overview = (emg, env, acts, s.events, thr)
+    qc = pd.concat(qc_tables, ignore_index=True)
+    trial_checks = pd.concat(check_tables, ignore_index=True)
+    qc.to_csv(out / "qc.csv", index=False)
+    trial_checks.to_csv(out / "trial_checks.csv", index=False)
     windows = pd.concat(window_tables, ignore_index=True)
     trials = pd.concat(trial_tables, ignore_index=True)
     n_windows = save_feature_table(conn, windows, kind="window")
@@ -291,10 +345,16 @@ def run_demo(
             "false_positives": sum(d["false_positives"] for d in detection),
             "median_onset_latency_s": float(np.median(latencies)) if latencies else float("nan"),
         },
+        "checks": _data_checks(cohort, qc, trial_checks),
         "eeg": eeg,
     }
-    (out / "summary.json").write_text(json.dumps(summary, indent=2, default=_json_default))
-    (out / "report.md").write_text(_report(summary, results, tracking_summary))
+    # explicit UTF-8 and LF: the same bytes on every OS (Windows defaults to cp1252)
+    (out / "summary.json").write_text(
+        json.dumps(summary, indent=2, default=_json_default), encoding="utf-8", newline="\n"
+    )
+    (out / "report.md").write_text(
+        _report(summary, results, tracking_summary), encoding="utf-8", newline="\n"
+    )
     say("\nValidation scenarios (accuracy over all held-out predictions):")
     say(results.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
     say(f"\nResults written to {out}/ (report.md, figures/, sql/, biosigkit_demo.sqlite)")

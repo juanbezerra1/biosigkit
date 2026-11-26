@@ -38,11 +38,12 @@ honesta, e padronizar (z-score) as features de cada sujeito remove as diferença
 | Pré-processamento | `PreprocessConfig` declarativo, `EMG_PRESET` / `EEG_PRESET`, **detecção automática de 50/60 Hz** (com harmônicos) que resiste a contrações fortes, proveniência em `signal.meta["preprocess"]` |
 | EMG | Envelope linear, RMS móvel, normalização por %CVM, MAV / RMS / WL / ZC / SSC / VAR / iEMG / MNF / MDF, detecção de ativação por limiar |
 | EEG | PSD de Welch, potência por banda, referência média comum, ERD %, rejeição de épocas por pico a pico |
-| Força | Tempo na faixa, maior trecho contínuo na faixa, erro de rastreamento, estabilidade (CV) |
+| Força | Tempo na faixa, maior trecho contínuo na faixa, erro de rastreamento, estabilidade (CV), janela da fase de sustentação (platô) |
 | Tabelas | Tabelas por janela e por tentativa com colunas `<canal>_<feature>`, rótulo por sobreposição, conversão longo/largo, resumos, validação |
+| Checagem dos dados | Relatório de qualidade por canal (saturação, trechos planos, NaN, fração de potência da rede elétrica), checagem de tentativas que diz *por que* uma foi rejeitada, gravações duplicadas encontradas por hash do conteúdo |
 | Aprendizado de máquina | LOSO, k-fold por grupo e (para contraste) k-fold ingênuo; normalização ajustada dentro de cada fold; z-score por sujeito; LDA / SVM / random forest / regressão logística; comparação de cenários |
-| SQL | Esquema SQLite (sujeitos → gravações → segmentos → features), consultas parametrizadas, seis consultas didáticas (funções de janela, CTEs, gaps-and-islands...) |
-| Linha de comando | `biosigkit demo \| features \| evaluate \| sql` |
+| SQL | Esquema SQLite (sujeitos → gravações → segmentos → features), consultas parametrizadas, sete consultas didáticas (funções de janela, CTEs, gaps-and-islands...) |
+| Linha de comando | `biosigkit demo \| features \| qc \| duplicates \| evaluate \| sql` |
 | Dados sintéticos | EMG de controle de força com variabilidade entre sujeitos, deriva de ganho entre tentativas e interferência da rede; EEG com dessincronização alfa relacionada à tarefa |
 
 ## Instalação
@@ -148,6 +149,67 @@ Outros resultados da mesma execução (dados sintéticos, então verificam o có
 
 ![ERD do EEG](docs/img/eeg_erd.png)
 
+## Checando os dados antes de modelar
+
+O leave-one-subject-out só é honesto se a tabela que ele recebe também for. São quatro checagens, todas no exemplo
+`examples/data_checks.py` (ele estraga de propósito uma gravação simulada, e um teste o executa):
+
+```python
+quality = signal_quality(damaged)  # uma linha por canal
+report = check_trials(damaged, session.events, trim_s=1.0)  # uma linha por tentativa, com o motivo
+usable = drop_invalid(session.events, report)  # mantém os números originais das tentativas
+hold = plateau_events(usable, session.force)  # a fase de sustentação, não um corte fixo
+copies = find_duplicates({"S01/S1": emg, "S09/S1": copy})  # as mesmas amostras com dois nomes
+```
+
+```text
+  channel  saturated_fraction  nonfinite_fraction  mains_fraction     ok
+0    emg1            0.003587            0.000000        0.004772  False
+1    emg2            0.000000            0.000333             NaN  False
+
+channel                                 issues
+   emg1              0.359% of samples clipped
+   emg2 0.0333% of samples are NaN or infinite
+
+ trial label              reason
+     3   50%           saturated
+     4   70% nonfinite;saturated
+     6   70%           saturated
+
+5 usable trials; hold found in 5, median 5.1 s of 6.0 s
+
+    level  n         hash        members
+recording  2 17587f2940a6 S01/S1, S09/S1
+```
+
+- **`signal_quality`** informa, por canal, a fração de amostras NaN / infinitas, de trechos planos (uma queda de
+  sinal ou um eletrodo solto), de amostras exatamente nos valores extremos do conversor (saturação) e a fração da
+  potência que as linhas da rede elétrica carregam *acima do espectro ao redor delas*. Rode na gravação **bruta**:
+  a filtragem suaviza a saturação. Os limites (`max_saturated`, `max_flat`, `max_mains`) são pontos de partida, não
+  padrões. A saturação é detectada como amostras repetidas nos extremos do canal, o que serve para EMG e EEG; um
+  traço que fica exatamente no seu mínimo em repouso (um sensor de força que lê 0 em repouso) também seria apontado.
+- **`check_trials`** diz *por que* cada tentativa é inutilizável (`outside_recording`, `too_short`, `nonfinite`,
+  `flat`, `saturated`, `no_plateau`), nomeando o canal. O `trial_feature_table(on_invalid="skip")` também deixou de
+  pular em silêncio: as tentativas rejeitadas ficam em `table.attrs["rejected"]`.
+- **`plateau_events`** encontra a fase de sustentação de cada traço de força, para que um sujeito lento não perca o
+  mesmo segundo que um rápido. Ela lê o nível que o traço sustenta (a mediana da metade central da tentativa) e fica
+  com o trecho que permanece em pelo menos 80 % dele, então supõe que a sustentação ocupa o meio da tentativa. Na
+  coorte simulada (192 tentativas de 6 s) a fase de sustentação tem mediana de 5.2 s, enquanto um corte fixo de 1 s
+  em cada ponta mantém 4.0 s.
+- **`find_duplicates`** calcula o hash das amostras (não dos nomes de arquivo), então uma gravação copiada sob o ID
+  de outro sujeito é encontrada. Essa cópia é um vazamento que o leave-one-subject-out não enxerga: o sujeito
+  "deixado de fora" também está no treino. O hash fica no banco (`recordings.content_sha256`) e a consulta
+  `duplicate_recordings` lista as repetições; bancos criados pela versão 0.1 são atualizados ao abrir.
+
+Pelo terminal:
+
+```bash
+biosigkit qc gravacao.csv --fs 1000 --strict          # código de saída 1 se algum canal tiver problema
+biosigkit duplicates S07.csv S12.csv --fs 1000         # gravações (ou canais) que são cópias
+biosigkit features rec.csv --fs 1000 --events trials.csv --mode trial --trim 1 \
+    --check-quality --on-invalid skip --rejected-out rejected.csv
+```
+
 ## Decisões de projeto
 
 - **Sinais imutáveis, proveniência registrada.** Toda operação devolve um novo `Signal`. O `preprocess` escreve o que
@@ -157,6 +219,8 @@ Outros resultados da mesma execução (dados sintéticos, então verificam o có
 - **Detecção de ruído da rede que sobrevive às contrações.** Usa um quantil baixo do espectrograma ao longo do tempo
   em vez da média: a interferência da rede é estacionária, os surtos de EMG não. Um teste roda a detecção em gravações
   simuladas com e sem interferência e exige zero falhas e zero falsos alarmes.
+- **Nada é descartado em silêncio.** Uma tentativa rejeitada, um canal saturado ou uma gravação duplicada é
+  informada com o motivo, em uma tabela que você pode salvar, em vez de sumir dos dados.
 - **Tabelas organizadas com convenção de nomes.** As colunas são `<canal>_<feature>` e nomes de feature não podem ter
   sublinhado, então os formatos largo e longo convertem sem perdas.
 - **Validação sem vazamento por padrão.** LOSO e k-fold por grupo garantem que nenhum sujeito aparece dos dois lados de
@@ -182,6 +246,7 @@ subjects 1──* recordings 1──* segments 1──* features
 | `top_trials_per_subject` | top-N por grupo: `ROW_NUMBER() OVER (PARTITION BY ...)` filtrado por uma CTE |
 | `data_quality` | agregado de um agregado, `CASE`, sinalizadores de balanceamento de classes |
 | `missing_values` | aritmética booleana em agregados (`SUM(value IS NULL)`), percentuais calculados |
+| `duplicate_recordings` | `GROUP BY ... HAVING`, `GROUP_CONCAT` sobre uma subconsulta ordenada, deixando os `NULL`s de fora de propósito |
 
 ```bash
 biosigkit sql list
@@ -195,7 +260,9 @@ biosigkit sql run demo_output/biosigkit_demo.sqlite -q "SELECT feature, COUNT(*)
 | Comando | Para quê |
 | --- | --- |
 | `biosigkit demo [--subjects N] [--trials-per-level N] [--seed S] [-o DIR]` | Pipeline completo em dados sintéticos: relatório, figuras, CSVs, banco SQLite |
-| `biosigkit features SINAL.csv [--events EVENTOS.csv] [--mode window\|trial] [--kind emg\|eeg]` | Pré-processa uma gravação e escreve a tabela de features (`--fs` ou `--time-col` dá a taxa de amostragem) |
+| `biosigkit features SINAL.csv [--events EVENTOS.csv] [--mode window\|trial] [--kind emg\|eeg]` | Pré-processa uma gravação e escreve a tabela de features (`--fs` ou `--time-col` dá a taxa de amostragem). O modo trial também aceita `--on-invalid skip`, `--check-quality` e `--rejected-out ARQUIVO` |
+| `biosigkit qc SINAL.csv [--strict] [-o ARQUIVO]` | Relatório de qualidade por canal; `--strict` sai com código 1 se algum canal tiver problema |
+| `biosigkit duplicates A.csv B.csv ... [--strict]` | Gravações (ou canais) que têm exatamente as mesmas amostras |
 | `biosigkit evaluate FEATURES.csv [--model lda\|svm_rbf\|svm_linear\|rf\|logreg] [--scheme loso\|group_kfold\|kfold] [--normalize]` | Valida sem vazamento entre sujeitos e imprime métricas e matriz de confusão |
 | `biosigkit sql list \| show NOME \| run BANCO (-e NOME \| -q "SELECT ...")` | SQL embutido e consultas livres |
 
@@ -209,16 +276,17 @@ src/biosigkit/
 ├── filters.py      passa-banda/baixas/altas, notch, detrend, resample
 ├── preprocess.py   PreprocessConfig, presets, detecção automática de ruído da rede
 ├── emg.py  eeg.py  force.py        features específicas de cada sinal
+├── quality.py  trials.py  duplicates.py    checagens: canais, tentativas (com motivos), cópias
 ├── windowing.py    janelas deslizantes, tabelas de eventos, épocas
 ├── tables.py       tabelas de features, longo/largo, resumos
 ├── ml.py           validação cruzada sem vazamento, z-score por sujeito
 ├── storage.py      esquema SQLite, salvar/carregar, consultas parametrizadas
-├── sql/            schema.sql e as seis consultas didáticas
+├── sql/            schema.sql e as sete consultas didáticas
 ├── synthetic.py    sessões e coortes simuladas
 ├── viz.py          figuras (API Figure do matplotlib, paleta segura para daltonismo)
 └── demo.py  cli.py  __main__.py
 tests/              suíte pytest, um arquivo por módulo
-examples/           quickstart.py (o trecho acima)
+examples/           quickstart.py (o trecho acima), data_checks.py
 docs/img/           figuras usadas neste README
 ```
 
@@ -245,6 +313,18 @@ mais antigas suportadas das dependências.
   [NeuroKit2](https://neuropsychology.github.io/NeuroKit/) (processamento de sinais fisiológicos). Cobre um caminho
   mais estreito (gravação bruta, tabela organizada, validação honesta, SQL) em poucos milhares de linhas legíveis.
 - Nenhum dado de participante deve entrar neste repositório; o `.gitignore` exclui formatos comuns de gravação.
+
+## Projetos relacionados
+
+Companheiros pequenos e testados, do mesmo autor. Nenhum é necessário para usar o biosigkit.
+
+- [subjectwise-ml](https://github.com/juanbezerra1/subjectwise-ml): só a parte de validação, para estudos com poucos
+  sujeitos: validação cruzada sem vazamento, teste de permutação que respeita os sujeitos, análise de poder por
+  simulação e um `audit` que também aponta um sujeito duplicado em uma tabela de features.
+- [eeg-erds](https://github.com/juanbezerra1/eeg-erds): ERD/ERS, picos de ERP, remoção de piscadas com SOBI e
+  rejeição de épocas para EEG já segmentado em épocas.
+- [experiment-randomizer](https://github.com/juanbezerra1/experiment-randomizer): sorteio reproduzível e auditável
+  para experimentos pequenos (quem recebe qual braço, em que ordem), com um registro que percebe edições.
 
 ## Licença
 

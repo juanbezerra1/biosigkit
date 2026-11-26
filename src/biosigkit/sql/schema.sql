@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS recordings (
     session      TEXT NOT NULL DEFAULT 'S1',
     fs_hz        REAL,
     preprocess   TEXT,              -- JSON: provenance of the preprocessing chain
+    content_sha256 TEXT,            -- SHA-256 of the samples (biosigkit.duplicates.signal_hash)
     UNIQUE (subject_id, session)
 );
 
