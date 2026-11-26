@@ -1,0 +1,9 @@
+# Every text file is stored and checked out with LF line endings, on every platform.
+# Without this, Git for Windows (the CI runner windows-latest included) checks files out with CRLF, and a test that
+# reads a committed file byte by byte (the live demo page must have no carriage return) fails there.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
