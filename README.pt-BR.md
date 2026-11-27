@@ -360,4 +360,4 @@ Companheiros pequenos e testados, do mesmo autor. Nenhum é necessário para usa
 
 ## Licença
 
-MIT, veja [LICENSE](LICENSE). Copyright (c) 2026 Juan de Oliveira Bezerra.
+MIT, veja [LICENSE](LICENSE). Copyright (c) 2026 Juan Bezerra.
