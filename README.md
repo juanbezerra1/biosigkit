@@ -359,4 +359,4 @@ Small, tested companions by the same author. None is required by biosigkit.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Copyright (c) 2026 Juan de Oliveira Bezerra.
+MIT, see [LICENSE](LICENSE). Copyright (c) 2026 Juan Bezerra.
